@@ -1,0 +1,29 @@
+{
+  "name": "openplugin",
+  "private": true,
+  "version": "0.1.0",
+  "description": "Open-source LLM agent runtime for Excel, Word, and PowerPoint",
+  "license": "Apache-2.0",
+  "workspaces": [
+    "packages/core",
+    "packages/add-in",
+    "packages/host-excel",
+    "packages/host-word",
+    "packages/host-powerpoint"
+  ],
+  "scripts": {
+    "test": "npm test --workspaces --if-present",
+    "test:core": "npm test -w @openplugin/core",
+    "build": "npm run build --workspaces --if-present",
+    "dev": "npm run dev -w @openplugin/add-in",
+    "start": "npm run start -w @openplugin/add-in",
+    "start:excel": "npm run start:excel -w @openplugin/add-in",
+    "start:word": "npm run start:word -w @openplugin/add-in",
+    "start:powerpoint": "npm run start:powerpoint -w @openplugin/add-in",
+    "stop": "npm run stop -w @openplugin/add-in",
+    "typecheck": "npm run typecheck --workspaces --if-present"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}

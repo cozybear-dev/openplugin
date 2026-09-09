@@ -1,6 +1,6 @@
 import type { HostKind, ToolDefinition } from "../llm/types.js";
 import type { HostAdapter } from "../hosts/types.js";
-import { truncateGrid } from "../hosts/types.js";
+import { addressForGrid, normalizeGrid, truncateGrid } from "../hosts/types.js";
 import type { Changeset } from "./changeset.js";
 
 const META: ToolDefinition[] = [
@@ -70,16 +70,26 @@ const BY_HOST: Record<HostKind, ToolDefinition[]> = {
       sheet: { type: "string" },
       address: { type: "string" }
     }, ["address"]),
-    tool("excel.writeRange", "Queue a value write. Does not apply until the user confirms.", {
-      sheet: { type: "string" },
-      address: { type: "string" },
-      values: { type: "array", items: { type: "array" } }
-    }, ["sheet", "address", "values"]),
-    tool("excel.setFormulas", "Queue formulas for a range.", {
-      sheet: { type: "string" },
-      address: { type: "string" },
-      formulas: { type: "array", items: { type: "array", items: { type: "string" } } }
-    }, ["sheet", "address", "formulas"]),
+    tool(
+      "excel.writeRange",
+      "Queue a value write. Does not apply until the user confirms. `address` is the top-left (or any range); the actual write size is `values.length` × `values[0].length`. A 3×2 table at `A1` writes `A1:B3`.",
+      {
+        sheet: { type: "string" },
+        address: { type: "string" },
+        values: { type: "array", items: { type: "array" } }
+      },
+      ["sheet", "address", "values"]
+    ),
+    tool(
+      "excel.setFormulas",
+      "Queue formulas for a range. `address` is the top-left (or any range); the actual write size is `formulas.length` × `formulas[0].length`. A 3×2 table at `A1` writes `A1:B3`.",
+      {
+        sheet: { type: "string" },
+        address: { type: "string" },
+        formulas: { type: "array", items: { type: "array", items: { type: "string" } } }
+      },
+      ["sheet", "address", "formulas"]
+    ),
     tool("excel.listTables", "List tables in the workbook."),
     tool("excel.createTable", "Queue creating a table over a range.", {
       sheet: { type: "string" },
@@ -187,26 +197,28 @@ export async function executeHostTool(
       return host.getRawFacts();
     case "excel.writeRange": {
       const sheet = String(args.sheet);
-      const address = String(args.address);
+      const values = normalizeGrid(args.values);
+      const address = addressForGrid(String(args.address), values);
       changeset.add({
         host: "excel",
         op: "writeRange",
         sheet,
         address,
-        values: args.values as unknown[][],
+        values,
         before: await captureGrid(host, sheet, address)
       });
       return { queued: true, preview: changeset.preview() };
     }
     case "excel.setFormulas": {
       const sheet = String(args.sheet);
-      const address = String(args.address);
+      const formulas = normalizeGrid(args.formulas).map((row) => row.map((cell) => String(cell ?? "")));
+      const address = addressForGrid(String(args.address), formulas);
       changeset.add({
         host: "excel",
         op: "setFormulas",
         sheet,
         address,
-        formulas: args.formulas as string[][],
+        formulas,
         before: await captureGrid(host, sheet, address)
       });
       return { queued: true };

@@ -47,6 +47,30 @@ describe("executeHostTool", () => {
     expect(cs.changes[0]).toMatchObject({ op: "writeRange", address: "A1" });
   });
 
+  it("rewrites writeRange address to the values shape before snapshotting", async () => {
+    const host = new FakeExcelHost();
+    host.sheets.Sheet1.values = [
+      ["old", "keep"],
+      ["x", "y"]
+    ];
+    const cs = new Changeset();
+    await executeHostTool(
+      host,
+      "excel.writeRange",
+      { sheet: "Sheet1", address: "A1", values: [["h1", "h2"], [1, 2]] },
+      cs
+    );
+    expect(cs.changes[0]).toMatchObject({
+      op: "writeRange",
+      address: "A1:B2",
+      values: [["h1", "h2"], [1, 2]]
+    });
+    expect((cs.changes[0] as { before?: unknown[][] }).before).toEqual([
+      ["old", "keep"],
+      ["x", "y"]
+    ]);
+  });
+
   it("applies an excel changeset in one shot", async () => {
     const host = new FakeExcelHost();
     const cs = new Changeset();

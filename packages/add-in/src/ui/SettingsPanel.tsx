@@ -71,6 +71,13 @@ export function SettingsPanel(props: {
     [props.models, modelText, props.provider.model]
   );
 
+  function commitTypedModel() {
+    const typed = modelText.trim();
+    const id = typed ? modelIdFromInput(props.models, typed) : "";
+    setModelText(id);
+    if (id !== props.provider.model) patch({ model: id });
+  }
+
   function patch(partial: Partial<ProviderConfig>) {
     void props.onChange({ ...props.provider, ...partial });
   }
@@ -143,16 +150,15 @@ export function SettingsPanel(props: {
             placeholder="Model"
             value={modelText}
             selectedOptions={props.provider.model ? [props.provider.model] : []}
-            disabled={!props.models.length && !props.provider.model}
             onOptionSelect={(_, data) => {
               if (data.optionValue == null) return;
               setModelText(data.optionValue);
-              patch({ model: data.optionValue });
+              if (data.optionValue !== props.provider.model) patch({ model: data.optionValue });
             }}
-            onChange={(e) => {
-              const typed = e.target.value;
-              setModelText(typed);
-              patch({ model: modelIdFromInput(props.models, typed) });
+            onChange={(e) => setModelText(e.target.value)}
+            onBlur={commitTypedModel}
+            onKeyDown={(e) => {
+              if (e.key === "Enter") commitTypedModel();
             }}
           >
             {filteredModels.map((m) => (

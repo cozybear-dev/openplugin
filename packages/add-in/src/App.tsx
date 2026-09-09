@@ -26,7 +26,7 @@ import { clearHistory, loadHistory, saveHistory, type StoredLine } from "./histo
 import { COMPANION_ORIGIN, isOllamaUrl, isOpenRouterUrl } from "./presets";
 import { loadRevisions, pushRevision, saveRevisions, type AppliedRevision } from "./revisions";
 import { createHost } from "./runtime-host";
-import { loadInstructions, loadProvider, loadUserPolicy, saveInstructions, saveProvider } from "./settings";
+import { loadInstructions, loadProvider, loadSearchSettings, loadUserPolicy, saveInstructions, saveProvider } from "./settings";
 import {
   importCatalog,
   importSkillFromMarkdown,
@@ -60,7 +60,7 @@ export function App(props: { hostKind: HostKind; inOffice: boolean }) {
   const [modelsTick, setModelsTick] = useState(0);
   const [instructions, setInstructions] = useState(loadInstructions);
   const [companion, setCompanion] = useState<CompanionStatus>({ state: "unknown" });
-  const [webSearch, setWebSearch] = useState(false);
+  const [webSearch, setWebSearch] = useState(() => loadSearchSettings().defaultEnabled);
   const [policy, setPolicy] = useState<Policy>(OPEN_POLICY);
   const [tab, setTab] = useState<"chat" | "settings">("chat");
   const [input, setInput] = useState("");
@@ -421,7 +421,7 @@ export function App(props: { hostKind: HostKind; inOffice: boolean }) {
           abortRef.current?.abort();
           setPending(null);
           setChatModel(provider.model);
-          setWebSearch(false);
+          setWebSearch(loadSearchSettings().defaultEnabled);
           void persist([], []);
           void clearHistory(props.hostKind);
         }}

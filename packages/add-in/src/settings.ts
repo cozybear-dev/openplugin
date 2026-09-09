@@ -4,6 +4,7 @@ import { DEFAULT_PROVIDER } from "./presets";
 const KEY = "openplugin.provider";
 const INSTRUCTIONS_KEY = "openplugin.instructions";
 const POLICY_KEY = "openplugin.userPolicy";
+const SEARCH_KEY = "openplugin.search";
 
 function parseProvider(raw: unknown): ProviderConfig | null {
   if (!raw || typeof raw !== "string") return null;
@@ -76,5 +77,16 @@ export function loadUserPolicy(): Partial<Policy> | null {
     return JSON.parse(raw) as Partial<Policy>;
   } catch {
     return null;
+  }
+}
+
+export function loadSearchSettings(): { defaultEnabled: boolean } {
+  const raw = read(SEARCH_KEY);
+  if (!raw) return { defaultEnabled: false };
+  try {
+    const parsed = JSON.parse(raw) as { defaultEnabled?: unknown };
+    return { defaultEnabled: Boolean(parsed.defaultEnabled) };
+  } catch {
+    return { defaultEnabled: false };
   }
 }

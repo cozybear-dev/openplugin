@@ -42,9 +42,11 @@ export function Composer(props: {
     [props.models, modelText, props.model]
   );
 
-  function commitModel(next: string, display = next) {
-    setModelText(display);
-    props.onModelChange(next);
+  function commitTypedModel() {
+    const typed = modelText.trim();
+    const id = typed ? modelIdFromInput(props.models, typed) : "";
+    setModelText(id);
+    if (id !== props.model) props.onModelChange(id);
   }
 
   return (
@@ -125,14 +127,16 @@ export function Composer(props: {
               placeholder="No model"
               value={modelText}
               selectedOptions={props.model ? [props.model] : []}
-              disabled={!props.models.length && !props.model}
+              disabled={props.disabled}
               onOptionSelect={(_, data) => {
                 if (data.optionValue == null) return;
-                commitModel(data.optionValue, data.optionValue);
+                setModelText(data.optionValue);
+                if (data.optionValue !== props.model) props.onModelChange(data.optionValue);
               }}
-              onChange={(e) => {
-                const typed = e.target.value;
-                commitModel(modelIdFromInput(props.models, typed), typed);
+              onChange={(e) => setModelText(e.target.value)}
+              onBlur={commitTypedModel}
+              onKeyDown={(e) => {
+                if (e.key === "Enter") commitTypedModel();
               }}
             >
               {filteredModels.map((m) => (

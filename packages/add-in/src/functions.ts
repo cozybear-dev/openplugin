@@ -2,15 +2,18 @@ import {
   buildExtractCall,
   buildMapCall,
   buildPromptCall,
+  buildTranslateCall,
   cacheKey,
   chatCompletions,
   chunkRows,
+  flattenCells,
   parseExtract,
   parseMappedArray,
+  reshapeCells,
   type ProviderConfig
 } from "@openplugin/core";
 
-const cache = new Map<string, string | string[]>();
+const cache = new Map<string, string | string[] | string[][]>();
 
 async function loadConfig(): Promise<ProviderConfig> {
   try {
@@ -49,7 +52,7 @@ async function map(range: unknown[][], instruction: string): Promise<string[][]>
   const config = await loadConfig();
   const key = cacheKey(["map", config.model, instruction, range]);
   const hit = cache.get(key);
-  if (Array.isArray(hit)) return hit.map((v) => [v]);
+  if (Array.isArray(hit) && hit.every((v) => typeof v === "string")) return hit.map((v) => [v]);
   const rows = range ?? [];
   const out: string[] = [];
   for (const chunk of chunkRows(rows, 25)) {
@@ -68,12 +71,42 @@ async function extract(range: unknown[][], schema: string): Promise<unknown[][]>
   return [parseExtract(text, String(schema))];
 }
 
+async function translate(
+  range: unknown[][],
+  target: string,
+  source?: string
+): Promise<string[][]> {
+  const targetLang = String(target ?? "").trim();
+  if (!targetLang) {
+    throw new Error('OP.TRANSLATE requires a target language (for example "Spanish" or "fr").');
+  }
+  const config = await loadConfig();
+  const src = source == null ? "" : String(source);
+  const key = cacheKey(["translate", config.model, targetLang, src, range]);
+  const hit = cache.get(key);
+  if (Array.isArray(hit) && hit.every((row) => Array.isArray(row))) return hit as string[][];
+  const rows = range ?? [];
+  const rowCount = rows.length;
+  const colCount = rows.reduce((m, row) => Math.max(m, row?.length ?? 0), 0);
+  const cells = flattenCells(rows);
+  const out: string[] = [];
+  for (const chunk of chunkRows(cells, 25)) {
+    const { system, user } = buildTranslateCall(targetLang, chunk, src || undefined);
+    const text = await complete(config, system, user);
+    out.push(...parseMappedArray(text, chunk.length));
+  }
+  const grid = reshapeCells(out, rowCount, colCount || 1);
+  cache.set(key, grid);
+  return grid;
+}
+
 function associate(): void {
   const cf = (globalThis as { CustomFunctions?: { associate: (id: string, fn: unknown) => void } }).CustomFunctions;
   if (!cf) return;
   cf.associate("PROMPT", prompt);
   cf.associate("MAP", map);
   cf.associate("EXTRACT", extract);
+  cf.associate("TRANSLATE", translate);
 }
 
 associate();

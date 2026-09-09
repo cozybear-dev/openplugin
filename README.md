@@ -41,9 +41,69 @@ On first run, Office will trust a local HTTPS certificate from `office-addin-dev
 
 ![OpenPlugin settings — provider, model, and API key](pictures/settings.png)
 
-Excel custom functions (after sideload): `=OP.PROMPT("hello")`, `=OP.MAP(A2:A10, "uppercase")`, `=OP.EXTRACT(A1:D20, "name, amount")`.
+## Excel custom functions
 
-### Manual sideload
+After sideload, Excel registers four `OP.*` formulas. They use the **same provider and model** you saved in the task pane (gear → Settings). If Settings has not been saved, the cell shows an error asking you to configure OpenPlugin.
+
+These formulas write their answer **into the cell** (or spill into neighbors). They do not go through the task-pane review list.
+
+| Formula | Use it for |
+|---|---|
+| `OP.PROMPT` | One question, optionally grounded in a range |
+| `OP.MAP` | Apply the same instruction to every row |
+| `OP.EXTRACT` | Pull named fields out of a block of cells |
+| `OP.TRANSLATE` | Translate a cell or range into another language |
+
+### `OP.PROMPT(prompt, [range])`
+
+Ask the model anything. Pass a range as the second argument to ground the answer in sheet data. Returns a single string.
+
+```excel
+=OP.PROMPT("hello")
+=OP.PROMPT("What is 17% of 240?")
+=OP.PROMPT("Summarize this table in one sentence", A1:D20)
+=OP.PROMPT("Which SKU has the largest quantity?", A1:C50)
+```
+
+### `OP.MAP(range, instruction)`
+
+Runs `instruction` against **each row** of `range` and spills a single column of results (one cell per input row). Rows are sent in batches of 25.
+
+```excel
+=OP.MAP(A2:A10, "uppercase")
+=OP.MAP(A2:A10, "translate to Spanish")
+=OP.MAP(A2:C20, "write a 5-word product title from these columns")
+=OP.MAP(B2:B50, "classify as bug, feature, or question")
+```
+
+If `A2:C20` is `name | color | size`, the third example returns one title per row, not per cell.
+
+### `OP.EXTRACT(range, schema)`
+
+Reads a range as text and returns **one row** of values, in the order of the comma-separated (or newline-separated) field names.
+
+```excel
+=OP.EXTRACT(A1:D20, "name, amount")
+=OP.EXTRACT(B2, "email, phone, company")
+=OP.EXTRACT(A1:A15, "invoice_number, date, total")
+```
+
+Example: `B2` contains `Ada Lovelace, ada@example.com, +1 202-555-0100`. Then `=OP.EXTRACT(B2, "email, phone, company")` spills `ada@example.com | +1 202-555-0100 |` (company blank if the model cannot find it).
+
+### `OP.TRANSLATE(text, target, [source])`
+
+Translates every cell in `text` into `target`. `target` and `source` may be names or codes (`"French"`, `"fr"`, `"ja-JP"`). Omit `source` to auto-detect. Empty cells stay empty. A single cell stays a single cell; a range spills a range of the same shape.
+
+```excel
+=OP.TRANSLATE(B2, "Spanish")
+=OP.TRANSLATE(B2:B50, "fr")
+=OP.TRANSLATE(B2, "Japanese", "English")
+=OP.TRANSLATE(A2:C10, "German")
+```
+
+`=OP.MAP(A2:A10, "translate to Spanish")` still works; `OP.TRANSLATE` is the dedicated version that preserves grid shape (cell-by-cell, not row-by-row).
+
+## Manual sideload
 
 If debugging tools do not launch Office, start the dev server and upload the manifest:
 
@@ -100,4 +160,4 @@ See `CLA.md` if you contribute.
 
 ## Status
 
-Sideloadable agent with a review-first task pane, OpenRouter / Ollama / custom presets, Excel `OP.*` functions, a loopback companion, and tenant `policy.json` via the companion. Tests run without Office (`npm test`).
+Sideloadable agent with a review-first task pane, OpenRouter / Ollama / custom presets, Excel `OP.PROMPT` / `OP.MAP` / `OP.EXTRACT` / `OP.TRANSLATE` functions, a loopback companion, and tenant `policy.json` via the companion. Tests run without Office (`npm test`).

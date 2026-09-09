@@ -36,6 +36,31 @@
         { "name": "schema", "description": "Comma-separated field names", "type": "string" }
       ],
       "result": { "dimensionality": "matrix", "type": "any" }
+    },
+    {
+      "id": "TRANSLATE",
+      "name": "TRANSLATE",
+      "description": "Translate a cell or range into a target language. Optional source language; omit to auto-detect.",
+      "parameters": [
+        {
+          "name": "text",
+          "description": "Cell or range to translate",
+          "type": "any",
+          "dimensionality": "matrix"
+        },
+        {
+          "name": "target",
+          "description": "Destination language name or code (for example Spanish or fr)",
+          "type": "string"
+        },
+        {
+          "name": "source",
+          "description": "Optional source language; omit to auto-detect",
+          "type": "string",
+          "optional": true
+        }
+      ],
+      "result": { "dimensionality": "matrix", "type": "string" }
     }
   ]
 }

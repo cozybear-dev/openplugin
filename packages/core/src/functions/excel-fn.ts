@@ -48,6 +48,37 @@ export function buildExtractCall(schema: string, range?: unknown[][]): { system:
   };
 }
 
+export function flattenCells(range: unknown[][] | undefined): string[] {
+  if (!range?.length) return [];
+  return range.flatMap((row) =>
+    (row ?? []).map((cell) => (cell == null ? "" : String(cell)))
+  );
+}
+
+export function reshapeCells(values: string[], rows: number, cols: number): string[][] {
+  const out: string[][] = [];
+  let i = 0;
+  for (let r = 0; r < rows; r++) {
+    const row: string[] = [];
+    for (let c = 0; c < cols; c++) row.push(values[i++] ?? "");
+    out.push(row);
+  }
+  return out;
+}
+
+export function buildTranslateCall(
+  target: string,
+  cells: string[],
+  source?: string
+): { system: string; user: string } {
+  const from = source?.trim() ? source.trim() : "auto-detect";
+  return {
+    system:
+      "You translate each input cell. Return a JSON array of strings, one per cell, same order. Keep empty strings empty. Preserve meaning; do not add quotes, labels, or markdown.",
+    user: `Target language: ${target}\nSource language: ${from}\n\nCells as JSON:\n${JSON.stringify(cells)}`
+  };
+}
+
 export function parseExtract(text: string, schema: string): unknown[] {
   const fields = schema
     .split(/[,\n]/)

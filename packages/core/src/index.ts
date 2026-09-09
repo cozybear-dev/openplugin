@@ -44,10 +44,13 @@ export {
   buildExtractCall,
   buildMapCall,
   buildPromptCall,
+  buildTranslateCall,
   cacheKey,
   chunkRows,
+  flattenCells,
   parseExtract,
   parseMappedArray,
+  reshapeCells,
   serializeRange
 } from "./functions/excel-fn.js";
 

@@ -39,7 +39,6 @@ export type DiffHunk =
 
 const CELL_CAP = 80;
 
-
 export function cellDiff(
   sheet: string,
   address: string,
@@ -228,6 +227,19 @@ export function invertChange(change: Change): Change | null {
     case "setNotes":
       if (change.beforeText == null) return null;
       return { ...change, notes: change.beforeText, beforeText: change.notes };
+    case "clearRange":
+    case "copyRange":
+      if (!change.before) return null;
+      return {
+        host: "excel",
+        op: "writeRange",
+        sheet: change.sheet,
+        address: change.op === "copyRange" ? change.dest : change.address,
+        values: change.before
+      };
+    case "replaceParagraph":
+      if (change.beforeText == null) return null;
+      return { ...change, text: change.beforeText, beforeText: change.text };
     default:
       return null;
   }

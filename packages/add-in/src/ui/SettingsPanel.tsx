@@ -1,9 +1,7 @@
 import {
-  Body1,
   Button,
   Caption1,
   Checkbox,
-  Combobox,
   Dropdown,
   Field,
   Input,
@@ -13,7 +11,8 @@ import {
   Textarea
 } from "@fluentui/react-components";
 import { CheckmarkFilled, DismissCircleFilled } from "@fluentui/react-icons";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useState } from "react";
+import { ModelPicker } from "./ModelPicker";
 import {
   chatCompletions,
   LlmError,
@@ -23,7 +22,9 @@ import {
 } from "@openplugin/core";
 import type { AuditEntry } from "../audit";
 import type { CompanionStatus } from "../companion";
+import { clearDebug, getDebug, setDebugPersist, type DebugEvent } from "../debug";
 import { matchPreset, PRESETS } from "../presets";
+import type { SearchSettings } from "../settings";
 
 export function SettingsPanel(props: {
   provider: ProviderConfig;
@@ -34,6 +35,8 @@ export function SettingsPanel(props: {
   disabledSkills: string[];
   audit: AuditEntry[];
   autoApply: boolean;
+  search: SearchSettings;
+  debug: DebugEvent[];
   models: ModelInfo[];
   modelsError: string | null;
   modelsLoading: boolean;
@@ -46,6 +49,7 @@ export function SettingsPanel(props: {
   onRemoveSkill: (name: string) => Promise<void>;
   onToggleSkill: (name: string, enabled: boolean) => void;
   onAutoApply: (on: boolean) => void;
+  onSearch: (next: SearchSettings) => Promise<void>;
   onTestLogged: (ok: boolean, summary: string) => void;
 }) {
   const preset = matchPreset(props.provider.baseUrl);
@@ -55,33 +59,11 @@ export function SettingsPanel(props: {
   const [importUrl, setImportUrl] = useState("");
   const [paste, setPaste] = useState("");
   const [importMsg, setImportMsg] = useState<string | null>(null);
-  const [modelText, setModelText] = useState(props.provider.model);
-  const ignoreNextCommit = useRef(false);
 
   useEffect(() => {
     setTestStatus("idle");
     setTestError(null);
   }, [props.provider.baseUrl, props.provider.apiKey, props.provider.model]);
-
-  useEffect(() => {
-    setModelText(props.provider.model);
-  }, [props.provider.model]);
-
-  const filteredModels = useMemo(
-    () => filterModels(props.models, modelText, props.provider.model),
-    [props.models, modelText, props.provider.model]
-  );
-
-  function commitTypedModel() {
-    if (ignoreNextCommit.current) {
-      ignoreNextCommit.current = false;
-      return;
-    }
-    const typed = modelText.trim();
-    const id = typed ? modelIdFromInput(props.models, typed) : "";
-    setModelText(id);
-    if (id !== props.provider.model) patch({ model: id });
-  }
 
   function patch(partial: Partial<ProviderConfig>) {
     void props.onChange({ ...props.provider, ...partial });
@@ -113,13 +95,13 @@ export function SettingsPanel(props: {
   return (
     <div className="op-settings">
       <div className="op-settings-head">
-        <Body1>Settings</Body1>
+        <div><div className="op-eyebrow">YOUR WORKSPACE, YOUR WAY</div><h1>Settings</h1></div>
         <Button appearance="subtle" size="small" onClick={props.onClose}>
           Done
         </Button>
       </div>
 
-      <Field label="Endpoint">
+      <section className="op-settings-section"><h2>Model connection</h2><p className="op-section-description">Choose the model you want to work with.</p><Field label="Provider">
         <Dropdown
           value={preset.name}
           onOptionSelect={(_, data) => {
@@ -149,30 +131,7 @@ export function SettingsPanel(props: {
       </Field>
       <Field label="Default model">
         <div className="op-import">
-          <Combobox
-            aria-label="Default model"
-            freeform
-            placeholder="Model"
-            value={modelText}
-            selectedOptions={props.provider.model ? [props.provider.model] : []}
-            onOptionSelect={(_, data) => {
-              if (data.optionValue == null) return;
-              ignoreNextCommit.current = true;
-              setModelText(data.optionValue);
-              if (data.optionValue !== props.provider.model) patch({ model: data.optionValue });
-              queueMicrotask(() => {
-                ignoreNextCommit.current = false;
-              });
-            }}
-            onChange={(e) => setModelText(e.target.value)}
-            onBlur={commitTypedModel}
-          >
-            {filteredModels.map((m) => (
-              <Option key={m.id} value={m.id} text={m.name ?? m.id}>
-                {m.name ?? m.id}
-              </Option>
-            ))}
-          </Combobox>
+<ModelPicker label="Default model" model={props.provider.model} models={props.models} loading={props.modelsLoading} onChange={(model) => patch({ model })} />
           <Button
             size="small"
             disabled={props.modelsLoading || !props.provider.baseUrl}
@@ -197,13 +156,13 @@ export function SettingsPanel(props: {
         </Field>
       )}
 
-      <MessageBar intent={props.companion.state === "connected" ? "success" : "info"}>
+      {(preset.id === "ollama" || props.companion.state === "connected") && <MessageBar intent={props.companion.state === "connected" ? "success" : "info"}>
         <MessageBarBody>
           {props.companion.state === "connected"
             ? "Companion connected on 127.0.0.1:8788. Local models can skip CORS."
             : "Companion not running. Needed for Ollama unless the server sends CORS headers. npm run companion"}
         </MessageBarBody>
-      </MessageBar>
+      </MessageBar>}
 
       <Button
         className={testStatus === "ok" ? "op-test-ok" : undefined}
@@ -226,6 +185,7 @@ export function SettingsPanel(props: {
         </MessageBar>
       )}
 
+      </section><details className="op-settings-section"><summary>Preferences<span>Instructions &amp; change review</span></summary>
       <Checkbox
         checked={props.autoApply}
         label="Auto-apply this session (skip review)"
@@ -240,7 +200,7 @@ export function SettingsPanel(props: {
         />
       </Field>
 
-      <Body1>Skills</Body1>
+      </details><details className="op-settings-section"><summary>Skills<span>Manage shortcuts &amp; import your own</span></summary>
       <ul className="op-skill-list">
         {props.skills.map((s) => (
           <li key={s.name}>
@@ -250,7 +210,7 @@ export function SettingsPanel(props: {
               onChange={(_, d) => props.onToggleSkill(s.name, Boolean(d.checked))}
             />
             <Caption1>
-              {s.source} · {s.description}
+              {s.source} · {skillBadge(s)} · {s.description}
             </Caption1>
             {s.source === "imported" && (
               <Button size="small" appearance="subtle" onClick={() => void props.onRemoveSkill(s.name)}>
@@ -302,7 +262,52 @@ export function SettingsPanel(props: {
       {importMsg && <Caption1>{importMsg}</Caption1>}
       {props.policyNote && <Caption1>{props.policyNote}</Caption1>}
 
-      <Body1>Activity</Body1>
+      </details><details className="op-settings-section"><summary>Web search<span>Sources &amp; search preferences</span></summary>
+      <Checkbox
+        checked={props.search.defaultEnabled}
+        label="Enable web search by default in new chats"
+        onChange={(_, d) => void props.onSearch({ ...props.search, defaultEnabled: Boolean(d.checked) })}
+      />
+      <Field label="Search backend">
+        <Dropdown
+          value={backendLabel(props.search.backend)}
+          onOptionSelect={(_, data) => {
+            const backend = data.optionValue as SearchSettings["backend"];
+            if (!backend) return;
+            void props.onSearch({ ...props.search, backend });
+          }}
+        >
+          <Option value="auto">Auto (native → free → Exa)</Option>
+          <Option value="native">Provider native</Option>
+          <Option value="duckduckgo">DuckDuckGo (free)</Option>
+          <Option value="exa">Exa</Option>
+          <Option value="custom">Custom URL</Option>
+        </Dropdown>
+      </Field>
+      <Field label="Exa API key">
+        <Input
+          type="password"
+          value={props.search.exaApiKey ?? ""}
+          onChange={(_, d) => void props.onSearch({ ...props.search, exaApiKey: d.value })}
+        />
+      </Field>
+      {props.search.backend === "custom" && (
+        <Field label="Custom search URL">
+          <Input
+            value={props.search.custom?.url ?? ""}
+            placeholder="https://… POST { query, maxResults }"
+            onChange={(_, d) =>
+              void props.onSearch({ ...props.search, custom: { ...props.search.custom, url: d.value } })
+            }
+          />
+        </Field>
+      )}
+      <Caption1>
+        Auto uses the model provider’s search when the endpoint supports it (OpenRouter, OpenAI). Otherwise it
+        uses DuckDuckGo. If the free engine is rate-limited, add an Exa key.
+      </Caption1>
+
+      </details><details className="op-settings-section"><summary>Activity<span>Recent changes &amp; connection tests</span></summary>
       {props.audit.length === 0 ? (
         <Caption1>Applies, rejects, connection tests, and skill runs show up here.</Caption1>
       ) : (
@@ -310,14 +315,64 @@ export function SettingsPanel(props: {
           {props.audit.slice(0, 40).map((e, i) => (
             <li key={`${e.ts}-${i}`}>
               <Caption1>
-                {new Date(e.ts).toLocaleString()} · {e.action}
+                {new Date(e.ts).toLocaleString()} · {e.program ?? e.host} · {e.documentTitle ?? "document"} ·{" "}
+                {e.action}
               </Caption1>
               <span>{e.summary}</span>
             </li>
           ))}
         </ul>
       )}
-      <Caption1>
+
+      </details><details className="op-settings-section"><summary>Diagnostics<span>Debug logs &amp; troubleshooting</span></summary>
+      <Checkbox
+        label="Keep debug log for this session"
+        onChange={(_, d) => setDebugPersist(Boolean(d.checked))}
+      />
+      <div className="op-debug-actions">
+        <Button
+          size="small"
+          onClick={() => {
+            void navigator.clipboard.writeText(JSON.stringify(getDebug(), null, 2));
+          }}
+        >
+          Copy
+        </Button>
+        <Button
+          size="small"
+          onClick={() => {
+            const blob = new Blob([getDebug().map((e) => JSON.stringify(e)).join("\n")], {
+              type: "application/jsonl"
+            });
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement("a");
+            a.href = url;
+            a.download = "openplugin-debug.jsonl";
+            a.click();
+            URL.revokeObjectURL(url);
+          }}
+        >
+          Download
+        </Button>
+        <Button size="small" onClick={() => clearDebug()}>
+          Clear
+        </Button>
+      </div>
+      {props.debug.length === 0 ? (
+        <Caption1>Agent, apply, and search events show up here.</Caption1>
+      ) : (
+        <ul className="op-debug">
+          {props.debug.slice(0, 80).map((e, i) => (
+            <li key={`${e.ts}-${i}`}>
+              <Caption1>
+                {e.level} · {e.source} · {new Date(e.ts).toLocaleTimeString()}
+              </Caption1>
+              <code>{e.message}</code>
+            </li>
+          ))}
+        </ul>
+      )}
+      </details><Caption1>
         Keys stay on this machine. The add-in talks to your endpoint directly — nothing is proxied
         through us.
       </Caption1>
@@ -325,19 +380,19 @@ export function SettingsPanel(props: {
   );
 }
 
-function modelIdFromInput(models: ModelInfo[], raw: string): string {
-  const exact = models.find((m) => m.id === raw);
-  if (exact) return exact.id;
-  const byName = models.filter((m) => (m.name ?? m.id) === raw);
-  return byName.length === 1 ? byName[0]!.id : raw;
+function skillBadge(s: SkillCatalogEntry): string {
+  if (s.inject === "always") return "Always injected";
+  if (s.disableModelInvocation) return "Slash only";
+  if (s.userInvocable === false) return "Model loads";
+  return "Slash";
 }
 
-function filterModels(models: ModelInfo[], query: string, selected: string): ModelInfo[] {
-  const q = query.trim().toLowerCase();
-  if (!q || q === selected.trim().toLowerCase()) return models;
-  return models.filter(
-    (m) => m.id.toLowerCase().includes(q) || (m.name?.toLowerCase().includes(q) ?? false)
-  );
+function backendLabel(backend: SearchSettings["backend"]): string {
+  if (backend === "native") return "Provider native";
+  if (backend === "duckduckgo") return "DuckDuckGo (free)";
+  if (backend === "exa") return "Exa";
+  if (backend === "custom") return "Custom URL";
+  return "Auto (native → free → Exa)";
 }
 
 export function formatError(err: unknown, companionUp: boolean): string {

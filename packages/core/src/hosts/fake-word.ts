@@ -29,6 +29,31 @@ export class FakeWordHost implements HostAdapter {
     return this.selection.text;
   }
 
+  comments: Array<{ text: string; author?: string; resolved?: boolean }> = [];
+
+  async readParagraphs(args?: { start?: number; count?: number }) {
+    const start = args?.start ?? 0;
+    const count = args?.count ?? this.paragraphs.length;
+    return this.paragraphs.slice(start, start + count).map((p, i) => ({
+      index: start + i,
+      text: p.text,
+      style: p.style
+    }));
+  }
+
+  async findText(args: { query: string; max?: number }) {
+    const q = args.query.toLowerCase();
+    const hits: Array<{ paragraphIndex: number; text: string }> = [];
+    this.paragraphs.forEach((p, i) => {
+      if (p.text.toLowerCase().includes(q)) hits.push({ paragraphIndex: i, text: p.text });
+    });
+    return hits.slice(0, args.max ?? 50);
+  }
+
+  async listComments() {
+    return this.comments.map((c, index) => ({ index, ...c }));
+  }
+
   async apply(changeset: Changeset): Promise<void> {
     for (const change of changeset.forHost("word")) {
       if (change.op === "replaceSelection") {
@@ -56,6 +81,16 @@ export class FakeWordHost implements HostAdapter {
       } else if (change.op === "insertComment") {
         const p = this.paragraphs[this.selection.paragraphIndex];
         if (p) p.text += ` /* ${change.text} */`;
+        this.comments.push({ text: change.text });
+      } else if (change.op === "replaceParagraph") {
+        const p = this.paragraphs[change.index];
+        if (p) p.text = change.text;
+      } else if (change.op === "replyComment") {
+        const c = this.comments[change.commentIndex];
+        if (c) c.text += ` / ${change.text}`;
+      } else if (change.op === "resolveComment") {
+        const c = this.comments[change.commentIndex];
+        if (c) c.resolved = true;
       }
     }
   }

@@ -39,6 +39,16 @@ export class FakePowerPointHost implements HostAdapter {
     return this.slides[slideIndex]?.notes ?? "";
   }
 
+  async readSlide(slideIndex: number) {
+    const slide = this.slides[slideIndex];
+    if (!slide) return { title: "", shapes: [], notes: "" };
+    return { title: slide.title, shapes: slide.shapes, notes: slide.notes };
+  }
+
+  async listLayouts() {
+    return ["Title Slide", "Title and Content", "Blank"];
+  }
+
   async apply(changeset: Changeset): Promise<void> {
     for (const change of changeset.forHost("powerpoint")) {
       if (change.op === "addSlide") {
@@ -62,6 +72,15 @@ export class FakePowerPointHost implements HostAdapter {
         if (slide) slide.notes = change.notes;
       } else if (change.op === "deleteSlide") {
         this.slides.splice(change.slideIndex, 1);
+      } else if (change.op === "duplicateSlide") {
+        const slide = this.slides[change.slideIndex];
+        if (slide) this.slides.splice(change.slideIndex + 1, 0, structuredClone(slide));
+      } else if (change.op === "reorderSlides") {
+        const [slide] = this.slides.splice(change.from, 1);
+        if (slide) this.slides.splice(change.to, 0, slide);
+      } else if (change.op === "addChart") {
+        const slide = this.slides[change.slideIndex];
+        if (slide) slide.shapes.push({ name: `Chart-${change.chartType}`, text: change.categories.join(",") });
       }
     }
   }

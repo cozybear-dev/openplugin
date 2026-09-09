@@ -16,6 +16,22 @@ export function findCitations(text: string): Citation[] {
   return found;
 }
 
+export function splitCitations(text: string): Array<{ text: string; citation?: Citation }> {
+  const cites = findCitations(text);
+  if (!cites.length) return [{ text }];
+  const out: Array<{ text: string; citation?: Citation }> = [];
+  let cursor = 0;
+  for (const c of cites) {
+    const idx = text.indexOf(c.text, cursor);
+    if (idx < 0) continue;
+    if (idx > cursor) out.push({ text: text.slice(cursor, idx) });
+    out.push({ text: c.text, citation: c });
+    cursor = idx + c.text.length;
+  }
+  if (cursor < text.length) out.push({ text: text.slice(cursor) });
+  return out;
+}
+
 export async function jumpTo(host: HostKind, citation: Citation): Promise<void> {
   if (host === "excel" && citation.kind === "cell" && citation.address && typeof Excel !== "undefined") {
     await Excel.run(async (context) => {

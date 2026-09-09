@@ -1,13 +1,16 @@
 import {
+  applyChangeset as applyHostChangeset,
   assertPolicy,
   Changeset,
   compileSnapshot,
-  describeTool,
   listModels,
   LlmError,
   mergePolicy,
   OPEN_POLICY,
   parseSlash,
+  planRestore,
+  resolveRestorePoint,
+  applyRestoreUndos,
   runAgent,
   type AgentResult,
   type ChatMessage,
@@ -16,17 +19,28 @@ import {
   type ModelInfo,
   type Policy,
   type ProviderConfig,
+  type RestorePoint,
+  type SearchResult,
   type Skill
 } from "@openplugin/core";
 import { useEffect, useMemo, useRef, useState } from "react";
-import { appendAuditLocal, loadAudit, type AuditEntry } from "./audit";
+import { appendAuditLocal, documentIdentity, loadAudit, programName, type AuditEntry } from "./audit";
 import { bundledSkills } from "./bundled-skills";
-import { fetchPolicy, postAudit, probeCompanion, type CompanionStatus } from "./companion";
+import { fetchPolicy, postAudit, postSearch, probeCompanion, type CompanionStatus } from "./companion";
+import { debugLog, subscribeDebug, type DebugEvent } from "./debug";
 import { clearHistory, loadHistory, saveHistory, type StoredLine } from "./history";
 import { COMPANION_ORIGIN, isOllamaUrl, isOpenRouterUrl } from "./presets";
 import { loadRevisions, pushRevision, saveRevisions, type AppliedRevision } from "./revisions";
 import { createHost } from "./runtime-host";
-import { loadInstructions, loadProvider, loadSearchSettings, loadUserPolicy, saveInstructions, saveProvider } from "./settings";
+import {
+  loadInstructions,
+  loadProvider,
+  loadSearchSettings,
+  loadUserPolicy,
+  saveInstructions,
+  saveProvider,
+  saveSearchSettings
+} from "./settings";
 import {
   importCatalog,
   importSkillFromMarkdown,
@@ -40,6 +54,7 @@ import { Composer } from "./ui/Composer";
 import { EmptyState } from "./ui/EmptyState";
 import { formatError, SettingsPanel } from "./ui/SettingsPanel";
 import { Header } from "./ui/Header";
+import { RestoreDialog } from "./ui/RestoreDialog";
 import { AppliedBar, ReviewPanel } from "./ui/ReviewCard";
 import { Thread } from "./ui/Thread";
 
@@ -60,12 +75,16 @@ export function App(props: { hostKind: HostKind; inOffice: boolean }) {
   const [modelsTick, setModelsTick] = useState(0);
   const [instructions, setInstructions] = useState(loadInstructions);
   const [companion, setCompanion] = useState<CompanionStatus>({ state: "unknown" });
-  const [webSearch, setWebSearch] = useState(() => loadSearchSettings().defaultEnabled);
   const [policy, setPolicy] = useState<Policy>(OPEN_POLICY);
   const [tab, setTab] = useState<"chat" | "settings">("chat");
   const [input, setInput] = useState("");
-  const [lines, setLines] = useState<StoredLine[]>(() => loadHistory(props.hostKind).lines);
-  const [history, setHistory] = useState<ChatMessage[]>(() => loadHistory(props.hostKind).messages);
+  const loaded = useMemo(() => loadHistory(props.hostKind), [props.hostKind]);
+  const [lines, setLines] = useState<StoredLine[]>(() => loaded.lines);
+  const [history, setHistory] = useState<ChatMessage[]>(() => loaded.messages);
+  const [restorePoints, setRestorePoints] = useState<RestorePoint[]>(() => loaded.restorePoints);
+  const [searchSettings, setSearchSettings] = useState(loadSearchSettings);
+  const [webSearch, setWebSearch] = useState(() => loadSearchSettings().defaultEnabled);
+  const [debug, setDebug] = useState<DebugEvent[]>([]);
   const [busy, setBusy] = useState(false);
   const [pending, setPending] = useState<AgentResult | null>(null);
   const [selectedHunks, setSelectedHunks] = useState<Set<string>>(new Set());
@@ -74,19 +93,29 @@ export function App(props: { hostKind: HostKind; inOffice: boolean }) {
   const [lastApplied, setLastApplied] = useState<AppliedRevision | null>(null);
   const [disabledSkills, setDisabledSkills] = useState<string[]>(() => loadDisabledSkills());
   const [audit, setAudit] = useState<AuditEntry[]>(() => loadAudit());
-  const [contextLabel, setContextLabel] = useState(props.hostKind);
+  const [contextLabel, setContextLabel] = useState<string>(props.hostKind);
   const [snapshot, setSnapshot] = useState<DocumentSnapshot | undefined>();
   const abortRef = useRef<AbortController | null>(null);
+  const operationRef = useRef(0);
+  const restoreRef = useRef<RestorePoint[]>(restorePoints);
+  restoreRef.current = restorePoints;
+  const [pendingRestore, setPendingRestore] = useState<number | null>(null);
 
   const enabledSkills = useMemo(
     () => skills.list(props.hostKind).filter((s) => !disabledSkills.includes(s.name)),
     [skills, props.hostKind, disabledSkills]
+  );
+  const slashSkills = useMemo(
+    () => enabledSkills.filter((s) => s.userInvocable !== false),
+    [enabledSkills]
   );
   const activeModel = chatModel || provider.model;
   const modelOptions = useMemo(
     () => unionModels(models, provider.model, chatModel),
     [models, provider.model, chatModel]
   );
+
+  useEffect(() => subscribeDebug(setDebug), []);
 
   useEffect(() => {
     void (async () => {
@@ -129,21 +158,32 @@ export function App(props: { hostKind: HostKind; inOffice: boolean }) {
     }
   }
 
-  async function persist(nextLines: StoredLine[], nextMessages: ChatMessage[]) {
+  async function persist(
+    nextLines: StoredLine[],
+    nextMessages: ChatMessage[],
+    nextPoints = restoreRef.current
+  ) {
+    restoreRef.current = nextPoints;
     setLines(nextLines);
     setHistory(nextMessages);
-    await saveHistory(props.hostKind, nextLines, nextMessages);
+    setRestorePoints(nextPoints);
+    await saveHistory(props.hostKind, nextLines, nextMessages, nextPoints);
   }
 
   function log(action: AuditEntry["action"], summary: string, extra?: Partial<AuditEntry>) {
     const list = appendAuditLocal({
       action,
       host: props.hostKind,
+      program: programName(props.hostKind),
       model: activeModel,
+      endpoint: provider.baseUrl,
       summary,
+      ...documentIdentity(),
+      documentTitle: snapshot?.title ?? documentIdentity().documentTitle,
       ...extra
     });
     setAudit(list);
+    debugLog("ui", `${action}: ${summary}`, { level: action === "error" ? "error" : "info" });
     if (companion.state === "connected") {
       void postAudit(companion.token, list[0]!);
     }
@@ -233,7 +273,7 @@ export function App(props: { hostKind: HostKind; inOffice: boolean }) {
     const prompt = text.trim();
     if (!prompt || busy) return;
 
-    const slash = parseSlash(prompt, enabledSkills.map((s) => s.name));
+    const slash = parseSlash(prompt, slashSkills.map((s) => s.name));
     if (slash.kind === "list") {
       setInput("");
       setLines((l) => [
@@ -241,9 +281,9 @@ export function App(props: { hostKind: HostKind; inOffice: boolean }) {
         { kind: "user", text: prompt },
         {
           kind: "assistant",
-          text: enabledSkills.length
-            ? enabledSkills.map((s) => `/${s.name} — ${s.description}`).join("\n")
-            : "No skills enabled for this host."
+          text: slashSkills.length
+            ? slashSkills.map((s) => `/${s.name} — ${s.description}`).join("\n")
+            : "No slash skills enabled for this host."
         }
       ]);
       return;
@@ -264,10 +304,23 @@ export function App(props: { hostKind: HostKind; inOffice: boolean }) {
       return;
     }
     setInput("");
-    const userLine: StoredLine = { kind: "user", text: prompt };
+    const checkpoint = {
+      id: `${Date.now()}`,
+      at: new Date().toISOString(),
+      revisionIds: revisions.map((r) => r.id)
+    };
+    const userLine: StoredLine = { kind: "user", text: prompt, checkpoint };
     const nextLines = [...lines, userLine];
+    const point: RestorePoint = {
+      ...checkpoint,
+      userLineIndex: nextLines.length - 1,
+      messageCount: history.length + 1
+    };
+    restoreRef.current = [...restoreRef.current, point].slice(-40);
+    setRestorePoints(restoreRef.current);
     setLines(nextLines);
     setBusy(true);
+    const operation = ++operationRef.current;
     const controller = new AbortController();
     abortRef.current = controller;
 
@@ -283,19 +336,23 @@ export function App(props: { hostKind: HostKind; inOffice: boolean }) {
 
     try {
       const result = await runTurn(message, effectiveConfig(provider, useCompanionFirst), controller.signal);
-      await finishTurn(nextLines, result);
+      await finishTurn(nextLines, result, operation);
     } catch (err) {
+      if (operation !== operationRef.current) return;
+      if (err instanceof LlmError && err.code === "abort") return;
       if (err instanceof LlmError && err.code === "cors") {
         let status = companion;
         if (status.state !== "connected") status = await probeCompanion();
         setCompanion(status);
         if (status.state === "connected" && !useCompanionFirst) {
           try {
-            const result = await runTurn(message, effectiveConfig(provider, true, status), controller.signal);
-            await finishTurn(nextLines, result);
+            const result = await runTurn(message, effectiveConfig(provider, true), controller.signal);
+            await finishTurn(nextLines, result, operation);
             setBusy(false);
             return;
           } catch (retryErr) {
+            if (operation !== operationRef.current) return;
+            if (retryErr instanceof LlmError && retryErr.code === "abort") return;
             setLines([...nextLines, { kind: "error", text: formatError(retryErr, true) }]);
             setBusy(false);
             return;
@@ -304,8 +361,10 @@ export function App(props: { hostKind: HostKind; inOffice: boolean }) {
       }
       setLines([...nextLines, { kind: "error", text: formatError(err, companion.state === "connected") }]);
     } finally {
-      setBusy(false);
-      abortRef.current = null;
+      if (operation === operationRef.current) {
+        setBusy(false);
+        abortRef.current = null;
+      }
     }
   }
 
@@ -319,6 +378,21 @@ export function App(props: { hostKind: HostKind; inOffice: boolean }) {
       previousSnapshot: snapshot,
       policy,
       signal,
+      webSearch: {
+        enabled: webSearch,
+        backend: searchSettings.backend,
+        exaApiKey: searchSettings.exaApiKey,
+        customUrl: searchSettings.custom?.url,
+        proxy:
+          companion.state === "connected"
+            ? async (req) =>
+                (await postSearch(companion.token, {
+                  ...req,
+                  apiKey: searchSettings.exaApiKey,
+                  customUrl: searchSettings.custom?.url
+                })) as SearchResult
+            : undefined
+      },
       onEvent: (event) => {
         if (event.type === "text") {
           setLines((l) => {
@@ -328,18 +402,33 @@ export function App(props: { hostKind: HostKind; inOffice: boolean }) {
             }
             return [...l, { kind: "assistant", text: event.delta }];
           });
-        } else if (event.type === "tool") {
-          setLines((l) => [...l, { kind: "tool", text: describeTool(event.name, (event.args ?? {}) as Record<string, unknown>) }]);
-        } else if (event.type === "skill") {
-          setLines((l) => [...l, { kind: "tool", text: `Using skill ${event.name}` }]);
+        } else if (event.type === "activity") {
+          debugLog("agent", event.label, { data: { name: event.name, phase: event.phase } });
+          setLines((l) => {
+            const last = l[l.length - 1];
+            if (
+              last?.kind === "activity" &&
+              last.name === event.name &&
+              last.phase === "start" &&
+              event.phase !== "start"
+            ) {
+              return [...l.slice(0, -1), { ...event, kind: "activity" as const }];
+            }
+            if (event.phase === "start" || event.phase === "error") {
+              return [...l, { ...event, kind: "activity" as const }];
+            }
+            return l;
+          });
         } else if (event.type === "error") {
+          debugLog("agent", event.message, { level: "error" });
           setLines((l) => [...l, { kind: "error", text: event.message }]);
         }
       }
     });
   }
 
-  async function finishTurn(baseLines: StoredLine[], result: AgentResult) {
+  async function finishTurn(baseLines: StoredLine[], result: AgentResult, operation = operationRef.current) {
+    if (operation !== operationRef.current) return;
     const withFinal = result.finalText
       ? appendAssistant(baseLines, result.finalText)
       : linesRefTail(baseLines);
@@ -363,8 +452,15 @@ export function App(props: { hostKind: HostKind; inOffice: boolean }) {
       const hunks = result.changeset.diff();
       setSelectedHunks(new Set(hunks.map((h) => h.id)));
       if (alwaysApply) {
-        await applyChangeset(result.changeset);
-        setPending(null);
+        const { failed } = await applyChangeset(result.changeset);
+        if (failed.length) {
+          const remaining = new Changeset();
+          for (const r of failed) remaining.add(r.change);
+          setPending({ ...result, changeset: remaining });
+          setSelectedHunks(new Set(remaining.diff().map((h) => h.id)));
+        } else {
+          setPending(null);
+        }
       } else {
         setPending(result);
       }
@@ -374,42 +470,144 @@ export function App(props: { hostKind: HostKind; inOffice: boolean }) {
   }
 
   async function applyChangeset(cs: Changeset) {
-    await host.apply(cs);
-    const inverse = cs.inverse();
-    const summary = cs.previewItems().map((i) => i.title).join(", ");
-    const rev: AppliedRevision = {
-      id: `${Date.now()}`,
-      at: new Date().toISOString(),
-      host: props.hostKind,
-      summary,
-      inverse: inverse.changes
-    };
-    const next = pushRevision(revisions, rev);
-    setRevisions(next);
-    setLastApplied(rev);
-    await saveRevisions(next);
-    log("apply", summary);
+    const results = await applyHostChangeset(host, cs);
+    const succeeded = results.filter((r) => r.ok);
+    const failed = results.filter((r) => !r.ok);
+    if (succeeded.length) {
+      const applied = new Changeset();
+      for (const r of succeeded) applied.add(r.change);
+      const inverse = applied.inverse();
+      const summary = applied.previewItems().map((i) => i.title).join(", ");
+      const rev: AppliedRevision = {
+        id: `${Date.now()}`,
+        at: new Date().toISOString(),
+        host: props.hostKind,
+        summary,
+        inverse: inverse.changes
+      };
+      const next = pushRevision(revisions, rev);
+      setRevisions(next);
+      setLastApplied(rev);
+      await saveRevisions(next);
+      log("apply", summary);
+    }
+    if (failed.length) {
+      const detail = failed.map((r) => r.error).join("; ");
+      setLines((l) => [...l, { kind: "error", text: `Could not apply ${failed.length} change(s): ${detail}` }]);
+      log("error", `Apply failed: ${detail}`);
+    }
+    return { succeeded, failed };
   }
 
   async function applySelected() {
     if (!pending) return;
     const filtered = pending.changeset.filter(selectedHunks);
     if (filtered.isEmpty()) return;
-    await applyChangeset(filtered);
-    pending.changeset.clear();
+    try {
+      const { failed } = await applyChangeset(filtered);
+      if (!failed.length) {
+        pending.changeset.clear();
+        setPending(null);
+        return;
+      }
+      const failedChanges = new Set(failed.map((r) => r.change));
+      const selectedChanges = new Set(filtered.changes);
+      const remaining = new Changeset();
+      for (const change of pending.changeset.changes) {
+        if (!selectedChanges.has(change) || failedChanges.has(change)) remaining.add(change);
+      }
+      setPending({ ...pending, changeset: remaining });
+      setSelectedHunks(new Set(remaining.diff().map((h) => h.id)));
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      setLines((l) => [...l, { kind: "error", text: message }]);
+      log("error", message);
+    }
+  }
+
+  async function restoreTo(userLineIndex: number) {
+    const line = lines[userLineIndex];
+    const point = resolveRestorePoint({
+      lines,
+      messages: history,
+      restorePoints,
+      userLineIndex,
+      lineCheckpoint: line?.kind === "user" ? line.checkpoint : undefined
+    });
+    abortRef.current?.abort();
+    const operation = ++operationRef.current;
+    setBusy(false);
     setPending(null);
+    const plan = planRestore({
+      lines,
+      messages: history,
+      restorePoint: point,
+      revisions
+    });
+    const keptPoints = restorePoints.filter((p) => p.userLineIndex <= userLineIndex);
+    try {
+      await persist(plan.lines, plan.messages, keptPoints);
+      const undoOutcome = await applyRestoreUndos({
+        undos: plan.undos,
+        remainingRevisions: plan.remainingRevisions,
+        apply: async (rev) => {
+          if (operation !== operationRef.current) return [];
+          const cs = new Changeset();
+          for (const c of rev.inverse) cs.add(c);
+          return applyHostChangeset(host, cs);
+        }
+      });
+      if (operation !== operationRef.current) return;
+      const restoreErrors = [...undoOutcome.errors];
+      if (plan.irreversible.length) {
+        restoreErrors.push(
+          `Could not auto-undo: ${plan.irreversible.map((r) => r.id).join(", ")}. Use Office Undo if needed.`
+        );
+      }
+      setRevisions(undoOutcome.remainingRevisions);
+      setLastApplied(undoOutcome.remainingRevisions[0] ?? null);
+      await saveRevisions(undoOutcome.remainingRevisions);
+      if (restoreErrors.length) {
+        const restoredLines = [
+          ...plan.lines,
+          ...restoreErrors.map((text) => ({ kind: "error" as const, text }))
+        ];
+        await persist(restoredLines, plan.messages, keptPoints);
+        log("error", restoreErrors.join("; "));
+      } else {
+        log("restore", `Restored to earlier message`);
+      }
+    } catch (err) {
+      if (operation !== operationRef.current) return;
+      const message = err instanceof Error ? err.message : String(err);
+      setLines((current) => [...current, { kind: "error", text: message }]);
+      log("error", message);
+    }
   }
 
   async function revertLast() {
     if (!lastApplied?.inverse.length) return;
     const cs = new Changeset();
     for (const c of lastApplied.inverse) cs.add(c);
-    await host.apply(cs);
-    log("revert", lastApplied.summary);
-    const next = revisions.filter((r) => r.id !== lastApplied.id);
-    setRevisions(next);
-    setLastApplied(next[0] ?? null);
-    await saveRevisions(next);
+    try {
+      const results = await applyHostChangeset(host, cs);
+      const failed = results.filter((r) => !r.ok);
+      if (failed.length) {
+        const detail = failed.map((r) => r.error).join("; ");
+        setLines((l) => [...l, { kind: "error", text: `Could not revert: ${detail}` }]);
+        log("error", `Revert failed: ${detail}`);
+        return;
+      }
+      log("revert", lastApplied.summary);
+      const next = revisions.filter((r) => r.id !== lastApplied.id);
+      setRevisions(next);
+      setLastApplied(next[0] ?? null);
+      await saveRevisions(next);
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      setLines((l) => [...l, { kind: "error", text: message }]);
+      log("error", message);
+    }
   }
 
   return (
@@ -421,8 +619,8 @@ export function App(props: { hostKind: HostKind; inOffice: boolean }) {
           abortRef.current?.abort();
           setPending(null);
           setChatModel(provider.model);
-          setWebSearch(loadSearchSettings().defaultEnabled);
-          void persist([], []);
+          setWebSearch(searchSettings.defaultEnabled);
+          void persist([], [], []);
           void clearHistory(props.hostKind);
         }}
         onOpenSettings={() => setTab("settings")}
@@ -440,16 +638,15 @@ export function App(props: { hostKind: HostKind; inOffice: boolean }) {
             ...imported
               .filter((s) => s.hosts.includes(props.hostKind))
               .map((s) => ({
-                name: s.name,
-                description: s.description,
-                hosts: s.hosts,
-                tools: s.tools,
+                ...s,
                 source: "imported" as const
               }))
           ]}
           disabledSkills={disabledSkills}
           audit={audit}
           autoApply={alwaysApply}
+          search={searchSettings}
+          debug={debug}
           models={modelOptions}
           modelsError={modelsError}
           modelsLoading={modelsLoading}
@@ -487,15 +684,37 @@ export function App(props: { hostKind: HostKind; inOffice: boolean }) {
             saveDisabledSkills(next);
           }}
           onAutoApply={setAlwaysApply}
+          onSearch={async (next) => {
+            setSearchSettings(next);
+            await saveSearchSettings(next);
+          }}
           onTestLogged={(ok, summary) => log(ok ? "test" : "error", summary)}
         />
       ) : (
         <>
+          <div className="op-document-bar"><span className="op-document-label">Selection</span><span title={contextLabel}>{contextLabel}</span><span className="op-review-mode">{alwaysApply ? "Auto-apply on" : "Review before apply"}</span></div>
           {lines.length === 0 ? (
-            <EmptyState hostKind={props.hostKind} onPick={(p) => void send(p)} />
+            <EmptyState hostKind={props.hostKind} onPick={(p) => {
+              setInput(p);
+              requestAnimationFrame(() => document.querySelector<HTMLTextAreaElement>(".op-composer-input")?.focus());
+            }} />
           ) : (
-            <Thread hostKind={props.hostKind} lines={lines} busy={busy} />
+            <Thread
+              hostKind={props.hostKind}
+              lines={lines}
+              busy={busy}
+              onRestore={setPendingRestore}
+            />
           )}
+          <RestoreDialog
+            open={pendingRestore !== null}
+            onCancel={() => setPendingRestore(null)}
+            onConfirm={() => {
+              const index = pendingRestore;
+              setPendingRestore(null);
+              if (index !== null) void restoreTo(index);
+            }}
+          />
           {pending && !pending.changeset.isEmpty() && (
             <ReviewPanel
               hostKind={props.hostKind}
@@ -523,11 +742,12 @@ export function App(props: { hostKind: HostKind; inOffice: boolean }) {
               onRevert={() => void revertLast()}
             />
           )}
+          {(!provider.baseUrl || !activeModel) && <button className="op-connect" onClick={() => setTab("settings")}><span><strong>Connect your model</strong><span>Choose a provider to start working together.</span></span><span aria-hidden>→</span></button>}
           <Composer
             value={input}
             busy={busy}
-            disabled={!provider.baseUrl}
-            skills={enabledSkills}
+            disabled={false}
+            skills={slashSkills}
             model={chatModel}
             models={modelOptions}
             webSearch={webSearch}

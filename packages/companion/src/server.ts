@@ -1,4 +1,5 @@
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
+import { runWebFetch, runWebSearch } from "@openplugin/core";
 import { appendAudit, ensureConfig, readAudit, readPolicy } from "./store.ts";
 import { forwardHeaders, joinTarget, proxyTo } from "./proxy.ts";
 
@@ -63,6 +64,38 @@ const server = createServer(async (req, res) => {
     }
     if (req.method === "GET" && url.pathname === "/audit") {
       json(res, 200, { entries: readAudit(Number(url.searchParams.get("limit") || 100)) });
+      return;
+    }
+    if (req.method === "POST" && url.pathname === "/search") {
+      if (!authorized(req)) {
+        json(res, 401, { error: "bad token" });
+        return;
+      }
+      const body = JSON.parse((await readBody(req)).toString("utf8") || "{}") as {
+        backend?: string;
+        query?: string;
+        url?: string;
+        apiKey?: string;
+        customUrl?: string;
+        extraHeaders?: Record<string, string>;
+        action?: "search" | "fetch";
+      };
+      const backend = (body.backend ?? "duckduckgo") as "duckduckgo" | "exa" | "custom" | "native";
+      const result =
+        body.action === "fetch"
+          ? await runWebFetch({
+              backend: backend === "native" ? "duckduckgo" : backend,
+              url: String(body.url ?? ""),
+              apiKey: body.apiKey
+            })
+          : await runWebSearch({
+              backend: backend === "native" ? "duckduckgo" : backend,
+              query: String(body.query ?? ""),
+              apiKey: body.apiKey,
+              customUrl: body.customUrl,
+              extraHeaders: body.extraHeaders
+            });
+      json(res, result.ok ? 200 : 502, result);
       return;
     }
     if (req.method === "POST" && url.pathname === "/audit") {

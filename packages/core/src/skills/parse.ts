@@ -12,6 +12,9 @@ export type SkillMeta = {
   hosts: HostKind[];
   tools?: string[];
   rootPath: string;
+  userInvocable: boolean;
+  disableModelInvocation: boolean;
+  inject: "always" | "on-demand";
 };
 
 export type Skill = SkillMeta & {
@@ -51,6 +54,7 @@ export function parseSkillMarkdown(markdown: string, rootPath: string): Skill {
   const tools = metadata["openplugin/tools"]
     ? metadata["openplugin/tools"].split(/\s+/).filter(Boolean)
     : undefined;
+  const injectRaw = (metadata["openplugin/inject"] ?? "").toLowerCase();
 
   return {
     name,
@@ -61,6 +65,10 @@ export function parseSkillMarkdown(markdown: string, rootPath: string): Skill {
     hosts,
     tools,
     rootPath,
+    userInvocable: raw["user-invocable"] !== false && raw["user-invocable"] !== "false",
+    disableModelInvocation:
+      raw["disable-model-invocation"] === true || raw["disable-model-invocation"] === "true",
+    inject: injectRaw === "always" ? "always" : "on-demand",
     body: match[2].trim()
   };
 }

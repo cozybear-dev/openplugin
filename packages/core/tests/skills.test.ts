@@ -51,6 +51,27 @@ Body
 `;
     const skill = parseSkillMarkdown(md, "/skills/selection-rewrite");
     expect(skill.hosts).toEqual(["excel", "word", "powerpoint"]);
+    expect(skill.userInvocable).toBe(true);
+    expect(skill.disableModelInvocation).toBe(false);
+    expect(skill.inject).toBe("on-demand");
+  });
+
+  it("parses invocation and inject flags", () => {
+    const md = `---
+name: house-style
+description: Always-on house style for this host.
+user-invocable: false
+disable-model-invocation: true
+metadata:
+  openplugin/hosts: "word"
+  openplugin/inject: always
+---
+Use formal tone.
+`;
+    const skill = parseSkillMarkdown(md, "/skills/house-style");
+    expect(skill.userInvocable).toBe(false);
+    expect(skill.disableModelInvocation).toBe(true);
+    expect(skill.inject).toBe("always");
   });
 });
 
@@ -113,5 +134,49 @@ ${extra}
     writeSkill(root, "range-cleanup");
     const registry = skillRegistryFromDirectory(root);
     expect(() => registry.readRef("range-cleanup", "../secret.md")).toThrow(/traversal/i);
+  });
+
+  it("splits slash, model, and always-inject catalogs", () => {
+    const root = mkdtempSync(join(tmpdir(), "op-skills-"));
+    writeSkill(root, "range-cleanup");
+    const dir = join(root, "house-style");
+    mkdirSync(dir);
+    writeFileSync(
+      join(dir, "SKILL.md"),
+      `---
+name: house-style
+description: Always injected house style used when writing.
+user-invocable: false
+metadata:
+  openplugin/hosts: "excel"
+  openplugin/inject: always
+---
+Always use thousand separators.
+`
+    );
+    const dir2 = join(root, "manual-only");
+    mkdirSync(dir2);
+    writeFileSync(
+      join(dir2, "SKILL.md"),
+      `---
+name: manual-only
+description: User-triggered cleanup used when the user types the command.
+disable-model-invocation: true
+metadata:
+  openplugin/hosts: "excel"
+---
+Do the cleanup.
+`
+    );
+    const registry = skillRegistryFromDirectory(root);
+    expect(registry.listForSlash("excel").map((s) => s.name).sort()).toEqual([
+      "manual-only",
+      "range-cleanup"
+    ]);
+    expect(registry.listForModel("excel").map((s) => s.name).sort()).toEqual([
+      "house-style",
+      "range-cleanup"
+    ]);
+    expect(registry.alwaysInject("excel").map((s) => s.name)).toEqual(["house-style"]);
   });
 });

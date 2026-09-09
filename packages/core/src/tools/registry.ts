@@ -1,6 +1,7 @@
-import type { HostKind, ToolDefinition } from "../llm/types.js";
+import type { HostKind, NativeSearchToolDefinition, ToolDefinition } from "../llm/types.js";
 import type { HostAdapter } from "../hosts/types.js";
 import { addressForGrid, normalizeGrid, truncateGrid } from "../hosts/types.js";
+import { WEB_SEARCH_TOOLS } from "../search/index.js";
 import type { Changeset } from "./changeset.js";
 
 const META: ToolDefinition[] = [
@@ -101,7 +102,58 @@ const BY_HOST: Record<HostKind, ToolDefinition[]> = {
       sheet: { type: "string" },
       source: { type: "string" },
       chartType: { type: "string" }
-    }, ["sheet", "source", "chartType"])
+    }, ["sheet", "source", "chartType"]),
+    tool("excel.readCsv", "Read a range as CSV. Preferred for analysis.", {
+      sheet: { type: "string" },
+      address: { type: "string" }
+    }, ["address"]),
+    tool("excel.search", "Find text in the workbook and return matching addresses.", {
+      query: { type: "string" },
+      sheet: { type: "string" }
+    }, ["query"]),
+    tool("excel.listObjects", "List tables, charts, and pivot tables."),
+    tool("excel.formatRange", "Queue number format or bold on a range.", {
+      sheet: { type: "string" },
+      address: { type: "string" },
+      bold: { type: "boolean" },
+      numberFormat: { type: "string" }
+    }, ["sheet", "address"]),
+    tool("excel.clearRange", "Queue clearing a range.", {
+      sheet: { type: "string" },
+      address: { type: "string" },
+      clearType: { type: "string", enum: ["contents", "formats", "all"] }
+    }, ["sheet", "address"]),
+    tool("excel.copyRange", "Queue copying a range (formulas translated).", {
+      sheet: { type: "string" },
+      source: { type: "string" },
+      dest: { type: "string" }
+    }, ["sheet", "source", "dest"]),
+    tool("excel.modifySheet", "Queue insert/delete/hide/freeze of rows or columns.", {
+      sheet: { type: "string" },
+      operation: { type: "string", enum: ["insert", "delete", "hide", "unhide", "freeze", "unfreeze"] },
+      dimension: { type: "string", enum: ["rows", "columns"] },
+      reference: { type: "string" },
+      count: { type: "number" }
+    }, ["sheet", "operation"]),
+    tool("excel.modifyWorkbook", "Queue create/delete/rename/duplicate sheet.", {
+      operation: { type: "string", enum: ["create", "delete", "rename", "duplicate"] },
+      sheet: { type: "string" },
+      newName: { type: "string" }
+    }, ["operation"]),
+    tool("excel.resizeRange", "Queue column width or row height.", {
+      sheet: { type: "string" },
+      address: { type: "string" },
+      columnWidth: { type: "number" },
+      rowHeight: { type: "number" }
+    }, ["sheet", "address"]),
+    tool("excel.createPivot", "Queue a pivot table.", {
+      sheet: { type: "string" },
+      source: { type: "string" },
+      dest: { type: "string" },
+      rows: { type: "array", items: { type: "string" } },
+      columns: { type: "array", items: { type: "string" } },
+      values: { type: "array" }
+    }, ["sheet", "source", "dest", "rows", "values"])
   ],
   word: [
     tool("word.getOutline", "Heading tree and paragraph count."),
@@ -124,7 +176,28 @@ const BY_HOST: Record<HostKind, ToolDefinition[]> = {
       rows: { type: "number" },
       cols: { type: "number" }
     }, ["rows", "cols"]),
-    tool("word.insertComment", "Queue a comment on the selection.", { text: { type: "string" } }, ["text"])
+    tool("word.insertComment", "Queue a comment on the selection.", { text: { type: "string" } }, ["text"]),
+    tool("word.readParagraphs", "Read paragraphs by index range.", {
+      start: { type: "number" },
+      count: { type: "number" }
+    }),
+    tool("word.replaceParagraph", "Queue replacing a paragraph by index.", {
+      index: { type: "number" },
+      text: { type: "string" }
+    }, ["index", "text"]),
+    tool("word.find", "Find text in the document.", {
+      query: { type: "string" },
+      max: { type: "number" }
+    }, ["query"]),
+    tool("word.listComments", "List comments in the document."),
+    tool("word.replyComment", "Queue a reply on a comment thread.", {
+      commentIndex: { type: "number" },
+      text: { type: "string" }
+    }, ["commentIndex", "text"]),
+    tool("word.resolveComment", "Queue resolving a comment.", {
+      commentIndex: { type: "number" }
+    }, ["commentIndex"]),
+    tool("word.getRevisions", "Summarize tracked changes (read-only).")
   ],
   powerpoint: [
     tool("ppt.getSlideTree", "Slide titles and shape counts."),
@@ -142,7 +215,20 @@ const BY_HOST: Record<HostKind, ToolDefinition[]> = {
       slideIndex: { type: "number" },
       notes: { type: "string" }
     }, ["slideIndex", "notes"]),
-    tool("ppt.deleteSlide", "Queue deleting a slide.", { slideIndex: { type: "number" } }, ["slideIndex"])
+    tool("ppt.deleteSlide", "Queue deleting a slide.", { slideIndex: { type: "number" } }, ["slideIndex"]),
+    tool("ppt.readSlide", "Read all shape text on a slide.", { slideIndex: { type: "number" } }, ["slideIndex"]),
+    tool("ppt.listLayouts", "List slide layouts from the template."),
+    tool("ppt.duplicateSlide", "Queue duplicating a slide.", { slideIndex: { type: "number" } }, ["slideIndex"]),
+    tool("ppt.reorderSlides", "Queue moving a slide.", {
+      from: { type: "number" },
+      to: { type: "number" }
+    }, ["from", "to"]),
+    tool("ppt.addChart", "Queue a native chart on a slide.", {
+      slideIndex: { type: "number" },
+      chartType: { type: "string" },
+      categories: { type: "array", items: { type: "string" } },
+      series: { type: "array" }
+    }, ["slideIndex", "chartType", "categories", "series"])
   ]
 };
 
@@ -164,10 +250,15 @@ function tool(
 
 export function listToolDefinitions(
   host: HostKind,
-  opts: { executeJsEnabled?: boolean } = {}
+  opts: {
+    executeJsEnabled?: boolean;
+    webSearch?: false | "function" | NativeSearchToolDefinition;
+  } = {}
 ): ToolDefinition[] {
-  const list = [...META, ...BY_HOST[host]];
+  const list: ToolDefinition[] = [...META, ...BY_HOST[host]];
   if (opts.executeJsEnabled) list.push(EXECUTE_JS);
+  if (opts.webSearch === "function") list.push(...WEB_SEARCH_TOOLS);
+  else if (opts.webSearch) list.push(opts.webSearch);
   return list;
 }
 
@@ -241,6 +332,99 @@ export async function executeHostTool(
         chartType: String(args.chartType)
       });
       return { queued: true };
+    case "excel.readCsv": {
+      if (!host.readRange) throw new Error("Host cannot read ranges.");
+      const grid = await host.readRange({
+        sheet: args.sheet as string | undefined,
+        address: String(args.address)
+      });
+      return { csv: toCsv(grid.values), truncated: grid.truncated };
+    }
+    case "excel.search": {
+      if (host.search) {
+        return host.search({ query: String(args.query), sheet: args.sheet as string | undefined });
+      }
+      return [];
+    }
+    case "excel.listObjects":
+      return host.getRawFacts();
+    case "excel.formatRange":
+      changeset.add({
+        host: "excel",
+        op: "formatRange",
+        sheet: String(args.sheet),
+        address: String(args.address),
+        bold: args.bold as boolean | undefined,
+        numberFormat: args.numberFormat as string | undefined
+      });
+      return { queued: true };
+    case "excel.clearRange": {
+      const sheet = String(args.sheet);
+      const address = String(args.address);
+      changeset.add({
+        host: "excel",
+        op: "clearRange",
+        sheet,
+        address,
+        clearType: (args.clearType as "contents" | "formats" | "all") ?? "contents",
+        before: await captureGrid(host, sheet, address)
+      });
+      return { queued: true };
+    }
+    case "excel.copyRange": {
+      const sheet = String(args.sheet);
+      changeset.add({
+        host: "excel",
+        op: "copyRange",
+        sheet,
+        source: String(args.source),
+        dest: String(args.dest),
+        before: await captureGrid(host, sheet, String(args.dest))
+      });
+      return { queued: true };
+    }
+    case "excel.modifySheet":
+      changeset.add({
+        host: "excel",
+        op: "modifySheet",
+        sheet: String(args.sheet),
+        operation: args.operation as "insert" | "delete" | "hide" | "unhide" | "freeze" | "unfreeze",
+        dimension: args.dimension as "rows" | "columns" | undefined,
+        reference: args.reference as string | undefined,
+        count: args.count as number | undefined
+      });
+      return { queued: true };
+    case "excel.modifyWorkbook":
+      changeset.add({
+        host: "excel",
+        op: "modifyWorkbook",
+        operation: args.operation as "create" | "delete" | "rename" | "duplicate",
+        sheet: args.sheet as string | undefined,
+        newName: args.newName as string | undefined
+      });
+      return { queued: true };
+    case "excel.resizeRange":
+      changeset.add({
+        host: "excel",
+        op: "resizeRange",
+        sheet: String(args.sheet),
+        address: String(args.address),
+        columnWidth: args.columnWidth as number | undefined,
+        rowHeight: args.rowHeight as number | undefined
+      });
+      return { queued: true };
+    case "excel.createPivot":
+      changeset.add({
+        host: "excel",
+        op: "createPivot",
+        sheet: String(args.sheet),
+        source: String(args.source),
+        dest: String(args.dest),
+        rows: (args.rows as string[]) ?? [],
+        columns: args.columns as string[] | undefined,
+        values: (args.values as Array<{ field: string; summarizeBy?: string }>) ?? []
+      });
+      return { queued: true };
     case "word.replaceSelection":
       changeset.add({
         host: "word",
@@ -285,6 +469,41 @@ export async function executeHostTool(
     case "word.insertComment":
       changeset.add({ host: "word", op: "insertComment", text: String(args.text) });
       return { queued: true };
+    case "word.readParagraphs":
+      if (host.readParagraphs) {
+        return host.readParagraphs({ start: args.start as number | undefined, count: args.count as number | undefined });
+      }
+      return host.getRawFacts();
+    case "word.replaceParagraph": {
+      const index = Number(args.index);
+      const paras = host.readParagraphs ? await host.readParagraphs({ start: index, count: 1 }) : [];
+      changeset.add({
+        host: "word",
+        op: "replaceParagraph",
+        index,
+        text: String(args.text),
+        beforeText: paras[0]?.text
+      });
+      return { queued: true };
+    }
+    case "word.find":
+      if (host.findText) return host.findText({ query: String(args.query), max: args.max as number | undefined });
+      return [];
+    case "word.listComments":
+      return host.listComments ? host.listComments() : [];
+    case "word.replyComment":
+      changeset.add({
+        host: "word",
+        op: "replyComment",
+        commentIndex: Number(args.commentIndex),
+        text: String(args.text)
+      });
+      return { queued: true };
+    case "word.resolveComment":
+      changeset.add({ host: "word", op: "resolveComment", commentIndex: Number(args.commentIndex) });
+      return { queued: true };
+    case "word.getRevisions":
+      return host.getRevisions ? host.getRevisions() : [];
     case "ppt.setShapeText": {
       const slideIndex = Number(args.slideIndex);
       const shapeName = args.shapeName as string | undefined;
@@ -322,10 +541,36 @@ export async function executeHostTool(
     case "ppt.deleteSlide":
       changeset.add({ host: "powerpoint", op: "deleteSlide", slideIndex: Number(args.slideIndex) });
       return { queued: true };
+    case "ppt.readSlide":
+      if (host.readSlide) return host.readSlide(Number(args.slideIndex));
+      return host.getRawFacts();
+    case "ppt.listLayouts":
+      return host.listLayouts ? host.listLayouts() : [];
+    case "ppt.duplicateSlide":
+      changeset.add({ host: "powerpoint", op: "duplicateSlide", slideIndex: Number(args.slideIndex) });
+      return { queued: true };
+    case "ppt.reorderSlides":
+      changeset.add({
+        host: "powerpoint",
+        op: "reorderSlides",
+        from: Number(args.from),
+        to: Number(args.to)
+      });
+      return { queued: true };
+    case "ppt.addChart":
+      changeset.add({
+        host: "powerpoint",
+        op: "addChart",
+        slideIndex: Number(args.slideIndex),
+        chartType: String(args.chartType),
+        categories: (args.categories as string[]) ?? [],
+        series: (args.series as Array<{ name: string; values: number[] }>) ?? []
+      });
+      return { queued: true };
     case "host.executeOfficeJs":
       throw new Error("host.executeOfficeJs is disabled by policy.");
     default:
-      return { truncated: false, values: truncateGrid([]).values };
+      throw new Error(`Unknown host tool: ${name}`);
   }
 }
 
@@ -340,6 +585,19 @@ async function captureGrid(
   } catch {
     return undefined;
   }
+}
+
+function toCsv(values: unknown[][]): string {
+  return values
+    .map((row) =>
+      row
+        .map((cell) => {
+          const s = cell == null ? "" : String(cell);
+          return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
+        })
+        .join(",")
+    )
+    .join("\n");
 }
 
 async function captureText(host: HostAdapter): Promise<string | undefined> {

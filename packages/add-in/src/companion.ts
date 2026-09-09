@@ -34,6 +34,22 @@ export async function fetchPolicy(token: string): Promise<unknown> {
   return body.policy ?? null;
 }
 
+export async function postSearch(
+  token: string,
+  body: Record<string, unknown>
+): Promise<unknown> {
+  const res = await fetch(`${COMPANION_ORIGIN}/search`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "x-openplugin-token": token
+    },
+    body: JSON.stringify(body)
+  });
+  if (!res.ok) throw new Error(`Companion search failed (${res.status})`);
+  return res.json();
+}
+
 export async function postAudit(token: string, entry: Record<string, unknown>): Promise<void> {
   await fetch(`${COMPANION_ORIGIN}/audit`, {
     method: "POST",

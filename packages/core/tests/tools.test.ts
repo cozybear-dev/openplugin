@@ -7,15 +7,28 @@ import { FakePowerPointHost } from "../src/hosts/fake-powerpoint.js";
 
 describe("listToolDefinitions", () => {
   it("returns only tools for the current host plus meta tools", () => {
-    const names = listToolDefinitions("excel").map((t) => t.function.name);
+    const names = listToolDefinitions("excel")
+      .filter((t): t is Extract<typeof t, { type: "function" }> => t.type === "function")
+      .map((t) => t.function.name);
     expect(names).toContain("excel.readRange");
     expect(names).toContain("skills.load");
     expect(names).not.toContain("word.insertParagraphs");
     expect(names).not.toContain("host.executeOfficeJs");
   });
 
+  it("includes web.search only when function search is enabled", () => {
+    const names = (opts?: Parameters<typeof listToolDefinitions>[1]) =>
+      listToolDefinitions("excel", opts)
+        .filter((t): t is Extract<typeof t, { type: "function" }> => t.type === "function")
+        .map((t) => t.function.name);
+    expect(names()).not.toContain("web.search");
+    expect(names({ webSearch: "function" })).toContain("web.search");
+  });
+
   it("includes executeOfficeJs only when enabled", () => {
-    const names = listToolDefinitions("word", { executeJsEnabled: true }).map((t) => t.function.name);
+    const names = listToolDefinitions("word", { executeJsEnabled: true })
+      .filter((t): t is Extract<typeof t, { type: "function" }> => t.type === "function")
+      .map((t) => t.function.name);
     expect(names).toContain("host.executeOfficeJs");
   });
 });
@@ -108,5 +121,47 @@ describe("executeHostTool", () => {
     );
     await host.apply(cs);
     expect(host.slides.at(-1)?.title).toBe("Q3 plan");
+  });
+
+  it("reads a range as csv and searches cells", async () => {
+    const host = new FakeExcelHost();
+    host.sheets.Sheet1.values = [
+      ["Name", "Amt"],
+      ["Gadgets", 12]
+    ];
+    const cs = new Changeset();
+    const csv = (await executeHostTool(host, "excel.readCsv", { sheet: "Sheet1", address: "A1:B2" }, cs)) as {
+      csv: string;
+    };
+    expect(csv.csv).toContain("Gadgets,12");
+    const hits = (await executeHostTool(host, "excel.search", { query: "Gadget" }, cs)) as Array<{
+      address: string;
+    }>;
+    expect(hits[0]?.address).toBe("A2");
+  });
+
+  it("queues a word paragraph replace and a ppt duplicate", async () => {
+    const word = new FakeWordHost();
+    word.paragraphs = [{ text: "old", style: "Normal" }];
+    const wcs = new Changeset();
+    await executeHostTool(word, "word.replaceParagraph", { index: 0, text: "new" }, wcs);
+    await word.apply(wcs);
+    expect(word.paragraphs[0]?.text).toBe("new");
+
+    const ppt = new FakePowerPointHost();
+    const pcs = new Changeset();
+    await executeHostTool(ppt, "ppt.duplicateSlide", { slideIndex: 0 }, pcs);
+    await ppt.apply(pcs);
+    expect(ppt.slides).toHaveLength(2);
+  });
+
+  it("rejects unknown tools instead of returning an empty read result", async () => {
+    const host = new FakeExcelHost();
+    const cs = new Changeset();
+
+    await expect(executeHostTool(host, "excel.missingTool", {}, cs)).rejects.toThrow(
+      "Unknown host tool: excel.missingTool"
+    );
+    expect(cs.isEmpty()).toBe(true);
   });
 });

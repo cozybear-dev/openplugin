@@ -11,7 +11,7 @@ export type ProviderConfig = {
 
 export type ModelInfo = { id: string; name?: string };
 
-export type ToolDefinition = {
+export type FunctionToolDefinition = {
   type: "function";
   function: {
     name: string;
@@ -19,6 +19,12 @@ export type ToolDefinition = {
     parameters: Record<string, unknown>;
   };
 };
+
+export type NativeSearchToolDefinition =
+  | { type: "openrouter:web_search"; parameters?: Record<string, unknown> }
+  | { type: "web_search" };
+
+export type ToolDefinition = FunctionToolDefinition | NativeSearchToolDefinition;
 
 export type ToolCall = {
   id: string;

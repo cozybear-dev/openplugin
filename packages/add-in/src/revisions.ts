@@ -10,7 +10,7 @@ export type AppliedRevision = {
   inverse: Change[];
 };
 
-function store(): Office.DocumentSettings | Storage | null {
+function store(): Office.Settings | Storage | null {
   try {
     if (Office?.context?.document?.settings) return Office.context.document.settings;
   } catch {

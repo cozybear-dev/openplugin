@@ -60,6 +60,17 @@ export interface HostAdapter {
   readSelectionText?(): Promise<string>;
   readShapeText?(args: { slideIndex: number; shapeName?: string }): Promise<string>;
   readNotes?(slideIndex: number): Promise<string>;
+  search?(args: { query: string; sheet?: string }): Promise<Array<{ sheet: string; address: string; value: unknown }>>;
+  readParagraphs?(args?: { start?: number; count?: number }): Promise<Array<{ index: number; text: string; style: string }>>;
+  findText?(args: { query: string; max?: number }): Promise<Array<{ paragraphIndex: number; text: string }>>;
+  listComments?(): Promise<Array<{ index: number; text: string; author?: string; resolved?: boolean }>>;
+  getRevisions?(): Promise<Array<{ type: string; text: string }>>;
+  readSlide?(slideIndex: number): Promise<{
+    title: string;
+    shapes: Array<{ name: string; text: string }>;
+    notes: string;
+  }>;
+  listLayouts?(): Promise<string[]>;
 }
 
 export const READ_RANGE_MAX_ROWS = 200;

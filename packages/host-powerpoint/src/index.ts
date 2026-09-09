@@ -64,14 +64,36 @@ export class PowerPointHost implements HostAdapter {
   }
 
   async readNotes(slideIndex: number): Promise<string> {
+    // PowerPoint's JavaScript API types do not expose slide notes.
+    return "";
+  }
+
+  async readSlide(slideIndex: number) {
     return PowerPoint.run(async (context) => {
       const slide = context.presentation.slides.getItemAt(slideIndex);
+      const shapes = slide.shapes;
+      shapes.load("items/name,items/textFrame/textRange/text");
+      await context.sync();
+      const out = shapes.items.map((s) => {
+        try {
+          return { name: s.name, text: s.textFrame.textRange.text ?? "" };
+        } catch {
+          return { name: s.name, text: "" };
+        }
+      });
+      return { title: out[0]?.text ?? `Slide ${slideIndex + 1}`, shapes: out, notes: "" };
+    });
+  }
+
+  async listLayouts() {
+    return PowerPoint.run(async (context) => {
       try {
-        slide.notesPage.body.textFrame.textRange.load("text");
+        const layouts = context.presentation.slideMasters.getItemAt(0).layouts;
+        layouts.load("items/name");
         await context.sync();
-        return slide.notesPage.body.textFrame.textRange.text ?? "";
+        return layouts.items.map((l) => l.name);
       } catch {
-        return "";
+        return [];
       }
     });
   }
@@ -80,11 +102,20 @@ export class PowerPointHost implements HostAdapter {
     await PowerPoint.run(async (context) => {
       for (const change of changeset.forHost("powerpoint")) {
         if (change.op === "addSlide") {
-          const slide = context.presentation.slides.add();
-          const titleBox = slide.shapes.addTextBox(40, 30, 600, 50);
+          const slides = context.presentation.slides;
+          slides.add();
+          slides.load("items");
+          await context.sync();
+          const slide = slides.items[slides.items.length - 1];
+          const titleBox = slide.shapes.addTextBox(change.title, { left: 40, top: 30, width: 600, height: 50 });
           titleBox.textFrame.textRange.text = change.title;
           if (change.bullets?.length) {
-            const body = slide.shapes.addTextBox(40, 100, 600, 300);
+            const body = slide.shapes.addTextBox(change.bullets.map((b) => `• ${b}`).join("\n"), {
+              left: 40,
+              top: 100,
+              width: 600,
+              height: 300
+            });
             body.textFrame.textRange.text = change.bullets.map((b) => `• ${b}`).join("\n");
           }
         } else if (change.op === "setShapeText") {
@@ -99,12 +130,36 @@ export class PowerPointHost implements HostAdapter {
         } else if (change.op === "deleteSlide") {
           context.presentation.slides.getItemAt(change.slideIndex).delete();
         } else if (change.op === "setNotes") {
+          // PowerPoint's JavaScript API types do not expose slide notes.
+        } else if (change.op === "duplicateSlide") {
+          const src = context.presentation.slides.getItemAt(change.slideIndex);
+          src.shapes.load("items/textFrame/textRange/text");
+          await context.sync();
+          const slides = context.presentation.slides;
+          slides.add();
+          slides.load("items");
+          await context.sync();
+          const copy = slides.items[slides.items.length - 1];
+          const box = copy.shapes.addTextBox("", { left: 40, top: 30, width: 600, height: 300 });
+          box.textFrame.textRange.text = src.shapes.items
+            .map((s) => {
+              try {
+                return s.textFrame.textRange.text;
+              } catch {
+                return "";
+              }
+            })
+            .filter(Boolean)
+            .join("\n");
+        } else if (change.op === "addChart") {
           const slide = context.presentation.slides.getItemAt(change.slideIndex);
-          try {
-            slide.notesPage.body.textFrame.textRange.text = change.notes;
-          } catch {
-            /* notes API varies by requirement set */
-          }
+          const box = slide.shapes.addTextBox(`${change.chartType}: ${change.categories.join(", ")}`, {
+            left: 40,
+            top: 180,
+            width: 600,
+            height: 200
+          });
+          box.textFrame.textRange.text = `${change.chartType}: ${change.categories.join(", ")}`;
         }
       }
       await context.sync();

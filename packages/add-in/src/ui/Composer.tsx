@@ -1,19 +1,17 @@
 import {
   Button,
-  Combobox,
   Menu,
   MenuItem,
   MenuList,
   MenuPopover,
   MenuTrigger,
-  Option,
   Textarea,
   ToggleButton,
   Tooltip
 } from "@fluentui/react-components";
 import { Add24Regular, Globe24Regular, Send24Regular, Square24Filled } from "@fluentui/react-icons";
 import { slashSuggestions, type ModelInfo, type SkillCatalogEntry } from "@openplugin/core";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { ModelPicker } from "./ModelPicker";
 
 export function Composer(props: {
   value: string;
@@ -33,27 +31,6 @@ export function Composer(props: {
   const names = props.skills.map((s) => s.name);
   const suggestions = slashSuggestions(props.value, names);
   const showSlash = props.value.startsWith("/") && !props.value.includes("\n");
-  const [modelText, setModelText] = useState(props.model);
-  const ignoreNextCommit = useRef(false);
-  useEffect(() => {
-    setModelText(props.model);
-  }, [props.model]);
-  const filteredModels = useMemo(
-    () => filterModels(props.models, modelText, props.model),
-    [props.models, modelText, props.model]
-  );
-
-  function commitTypedModel() {
-    if (ignoreNextCommit.current) {
-      ignoreNextCommit.current = false;
-      return;
-    }
-    const typed = modelText.trim();
-    const id = typed ? modelIdFromInput(props.models, typed) : "";
-    setModelText(id);
-    if (id !== props.model) props.onModelChange(id);
-  }
-
   return (
     <div className="op-composer">
       {showSlash && suggestions.length > 0 && (
@@ -74,12 +51,14 @@ export function Composer(props: {
           ))}
         </div>
       )}
+<div className="op-model-row"><span className="op-eyebrow">MODEL</span><ModelPicker label="Chat model" model={props.model} models={props.models} disabled={props.disabled || props.busy} placement="above" onChange={props.onModelChange} /></div>
       <div className="op-composer-box">
         <Textarea
+          aria-label="Message OpenPlugin"
           value={props.value}
           disabled={props.disabled}
           textarea={{ className: "op-composer-input" }}
-          placeholder="Ask OpenPlugin, or type / for a skill…"
+          placeholder="What would you like to work on?"
           onChange={(_, d) => props.onChange(d.value)}
           onKeyDown={(e) => {
             if (e.key === "Tab" && showSlash && suggestions[0]) {
@@ -87,7 +66,7 @@ export function Composer(props: {
               props.onInsertSkill(suggestions[0]);
               return;
             }
-            if (e.key === "Enter" && !e.shiftKey) {
+            if (e.key === "Enter" && !e.shiftKey && !e.nativeEvent.isComposing) {
               e.preventDefault();
               if (!props.busy) props.onSend();
             }
@@ -97,7 +76,7 @@ export function Composer(props: {
           <Menu>
             <MenuTrigger disableButtonEnhancement>
               <Button appearance="subtle" size="small" icon={<Add24Regular />}>
-                Add
+                Skills
               </Button>
             </MenuTrigger>
             <MenuPopover>
@@ -124,65 +103,24 @@ export function Composer(props: {
           >
             Web
           </ToggleButton>
-          <div className="op-model">
-            <Combobox
-              aria-label="Model"
-              size="small"
-              freeform
-              placeholder="No model"
-              value={modelText}
-              selectedOptions={props.model ? [props.model] : []}
-              disabled={props.disabled}
-              onOptionSelect={(_, data) => {
-                if (data.optionValue == null) return;
-                ignoreNextCommit.current = true;
-                setModelText(data.optionValue);
-                if (data.optionValue !== props.model) props.onModelChange(data.optionValue);
-                queueMicrotask(() => {
-                  ignoreNextCommit.current = false;
-                });
-              }}
-              onChange={(e) => setModelText(e.target.value)}
-              onBlur={commitTypedModel}
-            >
-              {filteredModels.map((m) => (
-                <Option key={m.id} value={m.id} text={m.name ?? m.id}>
-                  {m.name ?? m.id}
-                </Option>
-              ))}
-            </Combobox>
-          </div>
           {props.busy ? (
             <Tooltip content="Stop" relationship="label">
               <Button appearance="subtle" icon={<Square24Filled />} onClick={props.onStop} />
             </Tooltip>
           ) : (
             <Button
+              className="op-send"
+              aria-label="Send message"
               appearance="primary"
               icon={<Send24Regular />}
               disabled={props.disabled || !props.value.trim()}
               onClick={props.onSend}
             >
-              Send
             </Button>
           )}
         </div>
       </div>
+      <div className="op-composer-hint"><span>Type <kbd>/</kbd> for skills</span><span>Shift + Enter for a new line</span></div>
     </div>
-  );
-}
-
-function modelIdFromInput(models: ModelInfo[], raw: string): string {
-  const exact = models.find((m) => m.id === raw);
-  if (exact) return exact.id;
-  const byName = models.filter((m) => (m.name ?? m.id) === raw);
-  return byName.length === 1 ? byName[0]!.id : raw;
-}
-
-function filterModels(models: ModelInfo[], query: string, selected: string): ModelInfo[] {
-  const q = query.trim().toLowerCase();
-  if (!q || q === selected.trim().toLowerCase()) return models;
-  return models.filter(
-    (m) => m.id.toLowerCase().includes(q) || (m.name?.toLowerCase().includes(q) ?? false)
   );
 }

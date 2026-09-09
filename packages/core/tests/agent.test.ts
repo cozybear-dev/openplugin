@@ -39,6 +39,54 @@ function toolDelta(name: string, args: unknown, id = "call_1") {
 }
 
 describe("runAgent", () => {
+  it("rejects web tools when web search is disabled", async () => {
+    const host = new FakeExcelHost();
+    const skills = skillRegistryFromDirectory(mkdtempSync(join(tmpdir(), "op-web-disabled-")));
+    const result = await runAgent({
+      config,
+      host,
+      skills,
+      userMessage: "search",
+      fetchImpl: scriptedFetch([toolDelta("web.search", { query: "secret" }), { content: "done" }])
+    });
+
+    expect(result.messages).toContainEqual(
+      expect.objectContaining({
+        role: "tool",
+        content: JSON.stringify({ error: "Web search is disabled." })
+      })
+    );
+  });
+
+  it("enforces the skill allowlist for always-injected skills", async () => {
+    const root = mkdtempSync(join(tmpdir(), "op-skill-policy-"));
+    const dir = join(root, "restricted");
+    mkdirSync(dir);
+    writeFileSync(
+      join(dir, "SKILL.md"),
+      `---
+name: restricted
+description: Restricted skill
+metadata:
+  openplugin/hosts: "excel"
+  openplugin/inject: "always"
+---
+Do not expose this.
+`
+    );
+
+    await expect(
+      runAgent({
+        config,
+        host: new FakeExcelHost(),
+        skills: skillRegistryFromDirectory(root),
+        userMessage: "hello",
+        policy: { denyExecuteJs: true, allowedSkills: [] },
+        fetchImpl: scriptedFetch([{ content: "done" }])
+      })
+    ).rejects.toThrow("Skill is not allowed by policy.");
+  });
+
   it("loads a skill then records an excel write in the changeset without applying it", async () => {
     const root = mkdtempSync(join(tmpdir(), "op-agent-"));
     const dir = join(root, "range-cleanup");

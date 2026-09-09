@@ -79,6 +79,39 @@ export class ExcelHost implements HostAdapter {
     });
   }
 
+  async search(args: { query: string; sheet?: string }) {
+    return withExcel(async (context) => {
+      const hits: Array<{ sheet: string; address: string; value: unknown }> = [];
+      const sheets = args.sheet
+        ? [context.workbook.worksheets.getItem(args.sheet)]
+        : context.workbook.worksheets.items;
+      if (!args.sheet) {
+        context.workbook.worksheets.load("items/name");
+        await context.sync();
+      }
+      const needle = args.query.toLowerCase();
+      for (const sheet of args.sheet ? sheets : context.workbook.worksheets.items) {
+        const used = sheet.getUsedRangeOrNullObject();
+        used.load(["values", "address", "isNullObject"]);
+        await context.sync();
+        if (used.isNullObject) continue;
+        const values = (used.values as unknown[][]) ?? [];
+        values.slice(0, 200).forEach((row, r) => {
+          row.slice(0, 40).forEach((value, c) => {
+            if (String(value ?? "").toLowerCase().includes(needle)) {
+              hits.push({
+                sheet: sheet.name,
+                address: used.address.split("!")[1] ?? `${r + 1}:${c + 1}`,
+                value
+              });
+            }
+          });
+        });
+      }
+      return hits.slice(0, 50);
+    });
+  }
+
   async apply(changeset: Changeset): Promise<void> {
     await withExcel(async (context) => {
       for (const change of changeset.forHost("excel")) {
@@ -110,10 +143,78 @@ export class ExcelHost implements HostAdapter {
               Array.from({ length: cols }, () => change.numberFormat as string)
             );
           }
+        } else if (change.op === "clearRange") {
+          const range = context.workbook.worksheets.getItem(change.sheet).getRange(change.address);
+          if (change.clearType === "formats") range.clear(Excel.ClearApplyTo.formats);
+          else if (change.clearType === "all") range.clear(Excel.ClearApplyTo.all);
+          else range.clear(Excel.ClearApplyTo.contents);
+        } else if (change.op === "copyRange") {
+          const sheet = context.workbook.worksheets.getItem(change.sheet);
+          sheet.getRange(change.dest).copyFrom(sheet.getRange(change.source));
+        } else if (change.op === "modifySheet") {
+          applySheetStructure(context, change);
+        } else if (change.op === "modifyWorkbook") {
+          applyWorkbookStructure(context, change);
+        } else if (change.op === "resizeRange") {
+          const range = context.workbook.worksheets.getItem(change.sheet).getRange(change.address);
+          if (change.columnWidth != null) range.format.columnWidth = change.columnWidth;
+          if (change.rowHeight != null) range.format.rowHeight = change.rowHeight;
+        } else if (change.op === "createPivot") {
+          const sheet = context.workbook.worksheets.getItem(change.sheet);
+          sheet.pivotTables.add("Pivot", sheet.getRange(change.source), sheet.getRange(change.dest));
         }
       }
       await context.sync();
     });
+  }
+}
+
+function applySheetStructure(
+  context: Excel.RequestContext,
+  change: {
+    sheet: string;
+    operation: string;
+    dimension?: string;
+    reference?: string;
+    count?: number;
+  }
+): void {
+  const sheet = context.workbook.worksheets.getItem(change.sheet);
+  const count = change.count ?? 1;
+  if (change.operation === "freeze") {
+    sheet.freezePanes.freezeRows(count);
+    return;
+  }
+  if (change.operation === "unfreeze") {
+    sheet.freezePanes.unfreeze();
+    return;
+  }
+  if (!change.reference) return;
+  if (change.dimension === "columns") {
+    const range = sheet.getRange(`${change.reference}:${change.reference}`);
+    if (change.operation === "insert") range.insert(Excel.InsertShiftDirection.right);
+    else if (change.operation === "delete") range.delete(Excel.DeleteShiftDirection.left);
+    else if (change.operation === "hide") range.columnHidden = true;
+    else if (change.operation === "unhide") range.columnHidden = false;
+  } else {
+    const range = sheet.getRange(`${change.reference}:${change.reference}`);
+    if (change.operation === "insert") range.insert(Excel.InsertShiftDirection.down);
+    else if (change.operation === "delete") range.delete(Excel.DeleteShiftDirection.up);
+    else if (change.operation === "hide") range.rowHidden = true;
+    else if (change.operation === "unhide") range.rowHidden = false;
+  }
+}
+
+function applyWorkbookStructure(
+  context: Excel.RequestContext,
+  change: { operation: string; sheet?: string; newName?: string }
+): void {
+  if (change.operation === "create") context.workbook.worksheets.add(change.newName ?? change.sheet);
+  else if (change.operation === "delete" && change.sheet) context.workbook.worksheets.getItem(change.sheet).delete();
+  else if (change.operation === "rename" && change.sheet && change.newName) {
+    context.workbook.worksheets.getItem(change.sheet).name = change.newName;
+  } else if (change.operation === "duplicate" && change.sheet) {
+    context.workbook.worksheets.getItem(change.sheet).copy(Excel.WorksheetPositionType.end);
   }
 }
 

@@ -8,6 +8,7 @@
     "dev": "vite --port 3000",
     "dev-server": "vite --port 3000",
     "build": "vite build",
+    "test": "vitest run",
     "typecheck": "tsc --noEmit",
     "start": "office-addin-debugging start ../../manifest.xml",
     "start:excel": "office-addin-debugging start ../../manifest.xml desktop --app excel",
@@ -23,16 +24,21 @@
     "@openplugin/host-powerpoint": "0.1.0",
     "@openplugin/host-word": "0.1.0",
     "react": "^19.1.1",
-    "react-dom": "^19.1.1"
+    "react-dom": "^19.1.1",
+    "react-markdown": "^10.1.0",
+    "remark-gfm": "^4.0.1"
   },
   "devDependencies": {
+    "@testing-library/react": "^16.3.3",
     "@types/office-js": "^1.0.532",
     "@types/react": "^19.1.12",
     "@types/react-dom": "^19.1.9",
     "@vitejs/plugin-react": "^5.0.2",
+    "jsdom": "^30.0.1",
     "office-addin-debugging": "^6.0.3",
     "office-addin-dev-certs": "^2.0.3",
     "typescript": "^5.9.2",
-    "vite": "^7.1.5"
+    "vite": "^7.1.5",
+    "vitest": "^3.2.7"
   }
 }

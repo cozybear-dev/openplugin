@@ -1,10 +1,17 @@
-import type { Policy, ProviderConfig } from "@openplugin/core";
+import type { Policy, ProviderConfig, SearchBackend } from "@openplugin/core";
 import { DEFAULT_PROVIDER } from "./presets";
 
 const KEY = "openplugin.provider";
 const INSTRUCTIONS_KEY = "openplugin.instructions";
 const POLICY_KEY = "openplugin.userPolicy";
 const SEARCH_KEY = "openplugin.search";
+
+export type SearchSettings = {
+  defaultEnabled: boolean;
+  backend: SearchBackend;
+  exaApiKey?: string;
+  custom?: { url: string; apiKey?: string };
+};
 
 function parseProvider(raw: unknown): ProviderConfig | null {
   if (!raw || typeof raw !== "string") return null;
@@ -80,13 +87,22 @@ export function loadUserPolicy(): Partial<Policy> | null {
   }
 }
 
-export function loadSearchSettings(): { defaultEnabled: boolean } {
+export function loadSearchSettings(): SearchSettings {
   const raw = read(SEARCH_KEY);
-  if (!raw) return { defaultEnabled: false };
+  if (!raw) return { defaultEnabled: false, backend: "auto" };
   try {
-    const parsed = JSON.parse(raw) as { defaultEnabled?: unknown };
-    return { defaultEnabled: Boolean(parsed.defaultEnabled) };
+    const parsed = JSON.parse(raw) as SearchSettings;
+    return {
+      defaultEnabled: Boolean(parsed.defaultEnabled),
+      backend: parsed.backend ?? "auto",
+      exaApiKey: parsed.exaApiKey,
+      custom: parsed.custom
+    };
   } catch {
-    return { defaultEnabled: false };
+    return { defaultEnabled: false, backend: "auto" };
   }
+}
+
+export async function saveSearchSettings(settings: SearchSettings): Promise<void> {
+  await write(SEARCH_KEY, JSON.stringify(settings));
 }

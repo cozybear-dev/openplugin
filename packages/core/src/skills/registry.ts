@@ -1,7 +1,10 @@
 import type { HostKind } from "../llm/types.js";
 import type { Skill, SkillMeta } from "./parse.js";
 
-export type SkillCatalogEntry = Pick<SkillMeta, "name" | "description" | "hosts" | "tools">;
+export type SkillCatalogEntry = Pick<
+  SkillMeta,
+  "name" | "description" | "hosts" | "tools" | "userInvocable" | "disableModelInvocation" | "inject"
+>;
 
 function assertSafeRelative(path: string): string {
   const normalized = path.replace(/\\/g, "/").replace(/^\/+/, "");
@@ -28,7 +31,31 @@ export class SkillRegistry {
   list(host?: HostKind): SkillCatalogEntry[] {
     return [...this.skills.values()]
       .filter((s) => !host || s.hosts.includes(host))
-      .map(({ name, description, hosts, tools }) => ({ name, description, hosts, tools }));
+      .map(
+        ({
+          name,
+          description,
+          hosts,
+          tools,
+          userInvocable,
+          disableModelInvocation,
+          inject
+        }) => ({ name, description, hosts, tools, userInvocable, disableModelInvocation, inject })
+      );
+  }
+
+  listForSlash(host?: HostKind): SkillCatalogEntry[] {
+    return this.list(host).filter((s) => s.userInvocable);
+  }
+
+  listForModel(host?: HostKind): SkillCatalogEntry[] {
+    return this.list(host).filter((s) => !s.disableModelInvocation);
+  }
+
+  alwaysInject(host?: HostKind): Skill[] {
+    return [...this.skills.values()].filter(
+      (s) => s.inject === "always" && (!host || s.hosts.includes(host))
+    );
   }
 
   load(name: string): Skill {

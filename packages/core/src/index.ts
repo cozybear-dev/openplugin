@@ -2,9 +2,11 @@ export { chatCompletions, chatUrl, classifyHttpError, listModels, LlmError, mode
 export type {
   ChatMessage,
   ChatResult,
+  FunctionToolDefinition,
   HostKind,
   LlmErrorCode,
   ModelInfo,
+  NativeSearchToolDefinition,
   ProviderConfig,
   StreamEvent,
   ToolCall,
@@ -18,11 +20,25 @@ export type { SkillCatalogEntry } from "./skills/registry.js";
 
 export { Changeset } from "./tools/changeset.js";
 export type { Change, ExcelChange, PptChange, WordChange } from "./tools/changeset.js";
+export { applyChangeset } from "./tools/apply.js";
+export type { ApplyOpResult } from "./tools/apply.js";
 export { executeHostTool, listToolDefinitions } from "./tools/registry.js";
 export { cellDiff, invertChange, textDiff, type CellDelta, type DiffHunk, type TextPart } from "./tools/diff.js";
 export { parseSlash, slashSuggestions } from "./skills/slash.js";
 export type { SlashParse } from "./skills/slash.js";
-export { describeTool } from "./tools/describe.js";
+export { describeActivity, describeTool } from "./tools/describe.js";
+export type { ActivityDescription, ActivityKind } from "./tools/describe.js";
+export { applyRestoreUndos, planRestore, resolveRestorePoint, truncateThread } from "./restore.js";
+export type { RestorePoint, RestorableRevision, LineCheckpoint, RestoreUndoOutcome } from "./restore.js";
+export {
+  nativeSearchTool,
+  resolveSearchBackend,
+  runWebFetch,
+  runWebSearch,
+  supportsNativeSearch,
+  WEB_SEARCH_TOOLS
+} from "./search/index.js";
+export type { ResolvedSearchBackend, SearchBackend, SearchHit, SearchProxy, SearchResult } from "./search/index.js";
 export {
   MAP_CHUNK,
   buildExtractCall,
@@ -42,7 +58,7 @@ export { assertPolicy, mergePolicy, OPEN_POLICY } from "./policy.js";
 export type { Policy } from "./policy.js";
 
 export { runAgent, SYSTEM_PROMPT } from "./agent/loop.js";
-export type { AgentEvent, AgentResult } from "./agent/loop.js";
+export type { AgentEvent, AgentResult, WebSearchOptions } from "./agent/loop.js";
 
 export type { HostAdapter, RawFacts } from "./hosts/types.js";
 export {

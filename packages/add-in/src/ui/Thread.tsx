@@ -1,21 +1,44 @@
-import { Caption1, Spinner } from "@fluentui/react-components";
+import { Button, Caption1, Spinner, Tooltip } from "@fluentui/react-components";
+import { ArrowCounterclockwise24Regular } from "@fluentui/react-icons";
 import type { HostKind } from "@openplugin/core";
-import { findCitations, jumpTo, type Citation } from "../citations";
 import type { StoredLine } from "../history";
+import { MarkdownMessage } from "./MarkdownMessage";
 
 export function Thread(props: {
   hostKind: HostKind;
   lines: StoredLine[];
   busy: boolean;
+  onRestore?: (userLineIndex: number) => void;
 }) {
   return (
     <div className="op-thread">
       {props.lines.map((line, i) => (
         <article key={i} className={`op-msg op-msg-${line.kind}`}>
-          {line.kind === "tool" ? (
-            <Caption1>{line.text}</Caption1>
+          {line.kind === "activity" || line.kind === "tool" ? (
+            <Caption1 className={line.kind === "activity" && line.phase === "error" ? "op-activity-error" : undefined}>
+              {line.kind === "activity" ? activityPrefix(line.activity) : "• "}
+              {line.kind === "activity" ? line.label : line.text}
+              {line.kind === "activity" && line.detail && line.detail !== line.label ? (
+                <span className="op-activity-detail"> — {line.detail}</span>
+              ) : null}
+            </Caption1>
           ) : line.kind === "assistant" ? (
-            <CitedText hostKind={props.hostKind} text={line.text} />
+            <MarkdownMessage hostKind={props.hostKind} text={line.text} />
+          ) : line.kind === "user" ? (
+            <div className="op-msg-user-row">
+              <div>{line.text}</div>
+              {props.onRestore && (
+                <Tooltip content="Restore chat and undo OpenPlugin edits after this message" relationship="label">
+                  <Button
+                    appearance="subtle"
+                    size="small"
+                    aria-label="Restore to this message"
+                    icon={<ArrowCounterclockwise24Regular />}
+                    onClick={() => props.onRestore?.(i)}
+                  />
+                </Tooltip>
+              )}
+            </div>
           ) : (
             <div>{line.text}</div>
           )}
@@ -30,40 +53,12 @@ export function Thread(props: {
   );
 }
 
-function CitedText(props: { hostKind: HostKind; text: string }) {
-  const parts = splitCitations(props.text);
-  return (
-    <div>
-      {parts.map((part, i) =>
-        part.citation ? (
-          <button
-            key={i}
-            type="button"
-            className="op-cite"
-            onClick={() => void jumpTo(props.hostKind, part.citation!)}
-          >
-            {part.text}
-          </button>
-        ) : (
-          <span key={i}>{part.text}</span>
-        )
-      )}
-    </div>
-  );
+function activityPrefix(kind: string): string {
+  if (kind === "read") return "Reading · ";
+  if (kind === "write") return "Drafting · ";
+  if (kind === "skill") return "Skill · ";
+  if (kind === "search") return "Web · ";
+  if (kind === "fetch") return "Fetch · ";
+  return "• ";
 }
 
-function splitCitations(text: string): Array<{ text: string; citation?: Citation }> {
-  const cites = findCitations(text);
-  if (!cites.length) return [{ text }];
-  const out: Array<{ text: string; citation?: Citation }> = [];
-  let cursor = 0;
-  for (const c of cites) {
-    const idx = text.indexOf(c.text, cursor);
-    if (idx < 0) continue;
-    if (idx > cursor) out.push({ text: text.slice(cursor, idx) });
-    out.push({ text: c.text, citation: c });
-    cursor = idx + c.text.length;
-  }
-  if (cursor < text.length) out.push({ text: text.slice(cursor) });
-  return out;
-}

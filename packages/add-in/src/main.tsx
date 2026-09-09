@@ -1,17 +1,18 @@
-import { FluentProvider, webLightTheme } from "@fluentui/react-components";
+import { FluentProvider } from "@fluentui/react-components";
 import { StrictMode } from "react";
 import { createRoot } from "react-dom/client";
 import { App } from "./App";
 import "./functions";
 import { hostKindFromOffice } from "./runtime-host";
 import "./styles.css";
+import { marginTheme } from "./theme";
 
 const root = createRoot(document.getElementById("root")!);
 
 function render(hostKind: ReturnType<typeof hostKindFromOffice>, inOffice: boolean) {
   root.render(
     <StrictMode>
-      <FluentProvider theme={webLightTheme}>
+      <FluentProvider className="op-provider" theme={marginTheme}>
         <App hostKind={hostKind} inOffice={inOffice} />
       </FluentProvider>
     </StrictMode>

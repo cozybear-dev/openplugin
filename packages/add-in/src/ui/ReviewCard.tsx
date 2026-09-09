@@ -38,10 +38,10 @@ export function ReviewPanel(props: {
         ))}
       </div>
       <div className="op-review-actions">
-        <Button appearance="primary" disabled={selectedCount === 0} onClick={props.onApply}>
+        <Button data-testid="review-apply" appearance="primary" disabled={selectedCount === 0} onClick={props.onApply}>
           Apply selected ({selectedCount})
         </Button>
-        <Button appearance="subtle" onClick={props.onReject}>
+        <Button data-testid="review-reject" appearance="subtle" onClick={props.onReject}>
           Reject all
         </Button>
       </div>

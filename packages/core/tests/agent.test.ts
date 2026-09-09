@@ -16,11 +16,17 @@ const config: ProviderConfig = {
 function scriptedFetch(turns: unknown[]): typeof fetch {
   let i = 0;
   return async () => {
-    const payload = turns[i++] ?? { choices: [{ delta: { content: "done" } }] };
-    const sse =
-      typeof payload === "string"
-        ? payload
-        : `data: ${JSON.stringify({ choices: [{ delta: payload }] })}\n\ndata: [DONE]\n\n`;
+    const payload = turns[i++] ?? { content: "done" };
+    if (typeof payload === "string") {
+      return new Response(payload, { headers: { "Content-Type": "text/event-stream" } });
+    }
+    const choice = payload as { content?: string; tool_calls?: unknown; finish_reason?: string };
+    const delta = choice.tool_calls
+      ? { tool_calls: choice.tool_calls }
+      : { content: choice.content ?? "done" };
+    const sse = `data: ${JSON.stringify({
+      choices: [{ delta, finish_reason: choice.finish_reason ?? null }]
+    })}\n\ndata: [DONE]\n\n`;
     return new Response(sse, { headers: { "Content-Type": "text/event-stream" } });
   };
 }
@@ -155,5 +161,77 @@ Turn the selection into a table.
 
     expect(result.steps).toBe(3);
     expect(result.stopReason).toBe("max_steps");
+  });
+
+  it("continues when finish_reason is length and concatenates text", async () => {
+    const host = new FakeExcelHost();
+    const skills = skillRegistryFromDirectory(mkdtempSync(join(tmpdir(), "op-len-")));
+    const result = await runAgent({
+      config,
+      host,
+      skills,
+      userMessage: "explain this sheet",
+      fetchImpl: scriptedFetch([
+        { content: "Section one.\n\n", finish_reason: "length" },
+        { content: "Section two." }
+      ])
+    });
+    expect(result.finalText).toBe("Section one.\n\nSection two.");
+    expect(result.steps).toBe(2);
+    expect(result.stopReason).toBe("final");
+  });
+
+  it("nudges once when the first reply is text with no tools", async () => {
+    const host = new FakeExcelHost();
+    const skills = skillRegistryFromDirectory(mkdtempSync(join(tmpdir(), "op-nudge-")));
+    const seen: string[][] = [];
+    let i = 0;
+    const turns = [
+      { content: "I will clean the range." },
+      toolDelta("excel.getSummary", {}),
+      { content: "Ready." }
+    ];
+    const fetchImpl: typeof fetch = async (_url, init) => {
+      const body = JSON.parse(String(init?.body)) as { messages: Array<{ role: string; content?: string }> };
+      seen.push(body.messages.map((m) => `${m.role}:${typeof m.content === "string" ? m.content.slice(0, 80) : ""}`));
+      const payload = turns[i++] ?? { content: "done" };
+      return scriptedFetch([payload])(_url, init);
+    };
+    const result = await runAgent({
+      config,
+      host,
+      skills,
+      userMessage: "clean this range",
+      fetchImpl
+    });
+    expect(seen[1]?.some((m) => m.includes("Continue. If document work remains"))).toBe(true);
+    expect(result.finalText).toContain("Ready");
+    expect(result.stopReason).toBe("final");
+  });
+
+  it("does not nudge after tools have already run", async () => {
+    const host = new FakeExcelHost();
+    const skills = skillRegistryFromDirectory(mkdtempSync(join(tmpdir(), "op-nonudge-")));
+    const seen: string[] = [];
+    let i = 0;
+    const turns = [toolDelta("excel.getSummary", {}), { content: "Here is the summary." }];
+    const fetchImpl: typeof fetch = async (_url, init) => {
+      const body = JSON.parse(String(init?.body)) as { messages: Array<{ role: string; content?: string }> };
+      for (const m of body.messages) {
+        if (typeof m.content === "string" && m.content.startsWith("Continue.")) seen.push(m.content);
+      }
+      const payload = turns[i++] ?? { content: "done" };
+      return scriptedFetch([payload])(_url, init);
+    };
+    const result = await runAgent({
+      config,
+      host,
+      skills,
+      userMessage: "summarize",
+      fetchImpl
+    });
+    expect(seen).toEqual([]);
+    expect(result.finalText).toContain("Here is the summary.");
+    expect(result.steps).toBe(2);
   });
 });

@@ -17,8 +17,7 @@ import {
   chatCompletions,
   LlmError,
   type ModelInfo,
-  type ProviderConfig,
-  type SkillCatalogEntry
+  type ProviderConfig
 } from "@openplugin/core";
 import type { AuditEntry } from "../audit";
 import type { CompanionStatus } from "../companion";
@@ -31,8 +30,6 @@ export function SettingsPanel(props: {
   instructions: string;
   companion: CompanionStatus;
   policyNote?: string;
-  skills: Array<SkillCatalogEntry & { source: "bundled" | "imported" }>;
-  disabledSkills: string[];
   audit: AuditEntry[];
   autoApply: boolean;
   search: SearchSettings;
@@ -44,10 +41,7 @@ export function SettingsPanel(props: {
   onChange: (next: ProviderConfig) => Promise<void>;
   onRefreshModels: () => void;
   onInstructions: (text: string) => Promise<void>;
-  onImportUrl: (url: string) => Promise<void>;
-  onImportMarkdown: (md: string) => Promise<void>;
-  onRemoveSkill: (name: string) => Promise<void>;
-  onToggleSkill: (name: string, enabled: boolean) => void;
+  onOpenSkills: () => void;
   onAutoApply: (on: boolean) => void;
   onSearch: (next: SearchSettings) => Promise<void>;
   onTestLogged: (ok: boolean, summary: string) => void;
@@ -56,9 +50,6 @@ export function SettingsPanel(props: {
   const [testing, setTesting] = useState(false);
   const [testStatus, setTestStatus] = useState<"idle" | "ok" | "fail">("idle");
   const [testError, setTestError] = useState<string | null>(null);
-  const [importUrl, setImportUrl] = useState("");
-  const [paste, setPaste] = useState("");
-  const [importMsg, setImportMsg] = useState<string | null>(null);
 
   useEffect(() => {
     setTestStatus("idle");
@@ -165,6 +156,7 @@ export function SettingsPanel(props: {
       </MessageBar>}
 
       <Button
+        data-testid="settings-test"
         className={testStatus === "ok" ? "op-test-ok" : undefined}
         appearance={testStatus === "fail" ? "outline" : testStatus === "ok" ? "primary" : "secondary"}
         icon={
@@ -201,65 +193,8 @@ export function SettingsPanel(props: {
       </Field>
 
       </details><details className="op-settings-section"><summary>Skills<span>Manage shortcuts &amp; import your own</span></summary>
-      <ul className="op-skill-list">
-        {props.skills.map((s) => (
-          <li key={s.name}>
-            <Checkbox
-              checked={!props.disabledSkills.includes(s.name)}
-              label={`/${s.name}`}
-              onChange={(_, d) => props.onToggleSkill(s.name, Boolean(d.checked))}
-            />
-            <Caption1>
-              {s.source} · {skillBadge(s)} · {s.description}
-            </Caption1>
-            {s.source === "imported" && (
-              <Button size="small" appearance="subtle" onClick={() => void props.onRemoveSkill(s.name)}>
-                Remove
-              </Button>
-            )}
-          </li>
-        ))}
-      </ul>
-
-      <Field label="Import skill from URL">
-        <div className="op-import">
-          <Input value={importUrl} onChange={(_, d) => setImportUrl(d.value)} placeholder="https://…/SKILL.md" />
-          <Button
-            disabled={!importUrl.trim()}
-            onClick={async () => {
-              setImportMsg(null);
-              try {
-                await props.onImportUrl(importUrl.trim());
-                setImportMsg("Skill imported.");
-                setImportUrl("");
-              } catch (err) {
-                setImportMsg(err instanceof Error ? err.message : String(err));
-              }
-            }}
-          >
-            Import
-          </Button>
-        </div>
-      </Field>
-      <Field label="Or paste a SKILL.md">
-        <Textarea value={paste} onChange={(_, d) => setPaste(d.value)} placeholder="---&#10;name: my-skill&#10;..." />
-        <Button
-          disabled={!paste.trim()}
-          onClick={async () => {
-            setImportMsg(null);
-            try {
-              await props.onImportMarkdown(paste);
-              setPaste("");
-              setImportMsg("Skill imported.");
-            } catch (err) {
-              setImportMsg(err instanceof Error ? err.message : String(err));
-            }
-          }}
-        >
-          Import paste
-        </Button>
-      </Field>
-      {importMsg && <Caption1>{importMsg}</Caption1>}
+      <p className="op-section-description">Create, edit, import, or turn a chat into a skill.</p>
+      <Button onClick={props.onOpenSkills}>Open skill manager</Button>
       {props.policyNote && <Caption1>{props.policyNote}</Caption1>}
 
       </details><details className="op-settings-section"><summary>Web search<span>Sources &amp; search preferences</span></summary>
@@ -378,13 +313,6 @@ export function SettingsPanel(props: {
       </Caption1>
     </div>
   );
-}
-
-function skillBadge(s: SkillCatalogEntry): string {
-  if (s.inject === "always") return "Always injected";
-  if (s.disableModelInvocation) return "Slash only";
-  if (s.userInvocable === false) return "Model loads";
-  return "Slash";
 }
 
 function backendLabel(backend: SearchSettings["backend"]): string {

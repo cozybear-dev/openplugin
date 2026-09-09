@@ -1,6 +1,6 @@
 import type { HostKind, NativeSearchToolDefinition, ToolDefinition } from "../llm/types.js";
 import type { HostAdapter } from "../hosts/types.js";
-import { addressForGrid, normalizeGrid, truncateGrid } from "../hosts/types.js";
+import { addressForGrid, canonicalizeExcelAddress, normalizeGrid, truncateGrid } from "../hosts/types.js";
 import { WEB_SEARCH_TOOLS } from "../search/index.js";
 import type { Changeset } from "./changeset.js";
 
@@ -135,11 +135,16 @@ const BY_HOST: Record<HostKind, ToolDefinition[]> = {
       reference: { type: "string" },
       count: { type: "number" }
     }, ["sheet", "operation"]),
-    tool("excel.modifyWorkbook", "Queue create/delete/rename/duplicate sheet.", {
-      operation: { type: "string", enum: ["create", "delete", "rename", "duplicate"] },
-      sheet: { type: "string" },
-      newName: { type: "string" }
-    }, ["operation"]),
+    tool(
+      "excel.modifyWorkbook",
+      "Queue a workbook sheet change. create: newName (or sheet) is the new sheet. delete: sheet to remove. rename: sheet is the current name, newName is the target. duplicate: sheet is the source, newName is the copy's name.",
+      {
+        operation: { type: "string", enum: ["create", "delete", "rename", "duplicate"] },
+        sheet: { type: "string" },
+        newName: { type: "string" }
+      },
+      ["operation"]
+    ),
     tool("excel.resizeRange", "Queue column width or row height.", {
       sheet: { type: "string" },
       address: { type: "string" },
@@ -168,13 +173,20 @@ const BY_HOST: Record<HostKind, ToolDefinition[]> = {
       replace: { type: "string" },
       all: { type: "boolean" }
     }, ["search", "replace"]),
-    tool("word.applyStyle", "Queue a style on the selection.", {
-      style: { type: "string" },
-      target: { type: "string", enum: ["selection", "heading"] }
-    }, ["style"]),
+    tool(
+      "word.applyStyle",
+      "Queue a style. Pass paragraphIndex from word.readParagraphs / the snapshot to style that paragraph; omit it to use the current selection.",
+      {
+        style: { type: "string" },
+        target: { type: "string", enum: ["selection", "heading"] },
+        paragraphIndex: { type: "number" }
+      },
+      ["style"]
+    ),
     tool("word.insertTable", "Queue inserting a table.", {
       rows: { type: "number" },
-      cols: { type: "number" }
+      cols: { type: "number" },
+      cells: { type: "array", items: { type: "array", items: { type: "string" } } }
     }, ["rows", "cols"]),
     tool("word.insertComment", "Queue a comment on the selection.", { text: { type: "string" } }, ["text"]),
     tool("word.readParagraphs", "Read paragraphs by index range.", {
@@ -289,7 +301,7 @@ export async function executeHostTool(
     case "excel.writeRange": {
       const sheet = String(args.sheet);
       const values = normalizeGrid(args.values);
-      const address = addressForGrid(String(args.address), values);
+      const address = addressForGrid(canonicalizeExcelAddress(String(args.address)), values);
       changeset.add({
         host: "excel",
         op: "writeRange",
@@ -303,7 +315,7 @@ export async function executeHostTool(
     case "excel.setFormulas": {
       const sheet = String(args.sheet);
       const formulas = normalizeGrid(args.formulas).map((row) => row.map((cell) => String(cell ?? "")));
-      const address = addressForGrid(String(args.address), formulas);
+      const address = addressForGrid(canonicalizeExcelAddress(String(args.address)), formulas);
       changeset.add({
         host: "excel",
         op: "setFormulas",
@@ -319,7 +331,7 @@ export async function executeHostTool(
         host: "excel",
         op: "createTable",
         sheet: String(args.sheet),
-        address: String(args.address),
+        address: canonicalizeExcelAddress(String(args.address)),
         name: args.name as string | undefined
       });
       return { queued: true };
@@ -328,7 +340,7 @@ export async function executeHostTool(
         host: "excel",
         op: "createChart",
         sheet: String(args.sheet),
-        source: String(args.source),
+        source: canonicalizeExcelAddress(String(args.source)),
         chartType: String(args.chartType)
       });
       return { queued: true };
@@ -353,14 +365,14 @@ export async function executeHostTool(
         host: "excel",
         op: "formatRange",
         sheet: String(args.sheet),
-        address: String(args.address),
+        address: canonicalizeExcelAddress(String(args.address)),
         bold: args.bold as boolean | undefined,
         numberFormat: args.numberFormat as string | undefined
       });
       return { queued: true };
     case "excel.clearRange": {
       const sheet = String(args.sheet);
-      const address = String(args.address);
+      const address = canonicalizeExcelAddress(String(args.address));
       changeset.add({
         host: "excel",
         op: "clearRange",
@@ -373,13 +385,14 @@ export async function executeHostTool(
     }
     case "excel.copyRange": {
       const sheet = String(args.sheet);
+      const dest = canonicalizeExcelAddress(String(args.dest));
       changeset.add({
         host: "excel",
         op: "copyRange",
         sheet,
-        source: String(args.source),
-        dest: String(args.dest),
-        before: await captureGrid(host, sheet, String(args.dest))
+        source: canonicalizeExcelAddress(String(args.source)),
+        dest,
+        before: await captureGrid(host, sheet, dest)
       });
       return { queued: true };
     }
@@ -408,7 +421,7 @@ export async function executeHostTool(
         host: "excel",
         op: "resizeRange",
         sheet: String(args.sheet),
-        address: String(args.address),
+        address: canonicalizeExcelAddress(String(args.address)),
         columnWidth: args.columnWidth as number | undefined,
         rowHeight: args.rowHeight as number | undefined
       });
@@ -418,8 +431,8 @@ export async function executeHostTool(
         host: "excel",
         op: "createPivot",
         sheet: String(args.sheet),
-        source: String(args.source),
-        dest: String(args.dest),
+        source: canonicalizeExcelAddress(String(args.source)),
+        dest: canonicalizeExcelAddress(String(args.dest)),
         rows: (args.rows as string[]) ?? [],
         columns: args.columns as string[] | undefined,
         values: (args.values as Array<{ field: string; summarizeBy?: string }>) ?? []
@@ -455,7 +468,8 @@ export async function executeHostTool(
         host: "word",
         op: "applyStyle",
         style: String(args.style),
-        target: (args.target as "selection" | "heading") ?? "selection"
+        target: (args.target as "selection" | "heading") ?? "selection",
+        ...(typeof args.paragraphIndex === "number" ? { paragraphIndex: args.paragraphIndex } : {})
       });
       return { queued: true };
     case "word.insertTable":
@@ -463,7 +477,8 @@ export async function executeHostTool(
         host: "word",
         op: "insertTable",
         rows: Number(args.rows),
-        cols: Number(args.cols)
+        cols: Number(args.cols),
+        ...(Array.isArray(args.cells) ? { cells: args.cells as string[][] } : {})
       });
       return { queued: true };
     case "word.insertComment":

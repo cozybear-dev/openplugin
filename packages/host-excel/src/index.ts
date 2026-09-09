@@ -1,7 +1,12 @@
 import {
   addressToBounds,
+  canonicalizeExcelAddress,
+  cellAddressInUsedRange,
   Changeset,
   excelMatrixAssign,
+  formatApplySpec,
+  numberFormatMatrix,
+  sheetQualifiedAddress,
   type HostAdapter,
   type RawFacts,
   truncateGrid
@@ -19,10 +24,8 @@ export class ExcelHost implements HostAdapter {
       const wb = context.workbook;
       const sheets = wb.worksheets;
       sheets.load("items/name");
-      const selected = wb.getSelectedRange();
-      selected.load(["address", "values", "worksheet/name"]);
       const tables = wb.tables;
-      tables.load("items/name");
+      tables.load("items/name,items/worksheet/name");
       await context.sync();
 
       const used: Array<{ name: string; rows: number; cols: number; tables: string[] }> = [];
@@ -41,29 +44,47 @@ export class ExcelHost implements HostAdapter {
         }
       });
 
-      const tableNames = tables.items.map((t) => t.name);
-      if (used[0]) used[0].tables = tableNames;
+      for (const table of tables.items) {
+        const sheetName = (table as { worksheet?: { name?: string } }).worksheet?.name;
+        const slot = used.find((s) => s.name === sheetName) ?? used[0];
+        if (slot && !slot.tables.includes(table.name)) slot.tables.push(table.name);
+      }
 
-      const values = (selected.values as unknown[][]) ?? [[""]];
+      const fallbackSheet = used[0]?.name ?? sheets.items[0]?.name ?? "Sheet1";
+      let selection = { sheet: fallbackSheet, address: "A1", values: [[""]] as unknown[][] };
+      try {
+        const selected = wb.getSelectedRange();
+        selected.load(["address", "values", "worksheet/name"]);
+        await context.sync();
+        const values = (selected.values as unknown[][]) ?? [[""]];
+        selection = {
+          sheet: selected.worksheet.name,
+          address: selected.address.split("!").pop() ?? selected.address,
+          values: truncateGrid(values, 30, 12).values
+        };
+      } catch {
+        /* chart, shape, or other non-range selection */
+      }
+
       return {
         host: "excel",
         title: "Workbook",
         sheets: used,
-        selection: {
-          sheet: selected.worksheet.name,
-          address: selected.address.split("!").pop() ?? selected.address,
-          values: truncateGrid(values, 30, 12).values
-        }
+        selection
       };
     });
   }
 
   async readSelectionText(): Promise<string> {
     return withExcel(async (context) => {
-      const selected = context.workbook.getSelectedRange();
-      selected.load("values");
-      await context.sync();
-      return ((selected.values as unknown[][]) ?? []).flat().map((v) => String(v ?? "")).join(" ");
+      try {
+        const selected = context.workbook.getSelectedRange();
+        selected.load("values");
+        await context.sync();
+        return ((selected.values as unknown[][]) ?? []).flat().map((v) => String(v ?? "")).join(" ");
+      } catch {
+        return "";
+      }
     });
   }
 
@@ -72,7 +93,7 @@ export class ExcelHost implements HostAdapter {
       const sheet = args.sheet
         ? context.workbook.worksheets.getItem(args.sheet)
         : context.workbook.worksheets.getActiveWorksheet();
-      const range = sheet.getRange(args.address);
+      const range = sheet.getRange(canonicalizeExcelAddress(args.address));
       range.load("values");
       await context.sync();
       return truncateGrid((range.values as unknown[][]) ?? []);
@@ -101,7 +122,7 @@ export class ExcelHost implements HostAdapter {
             if (String(value ?? "").toLowerCase().includes(needle)) {
               hits.push({
                 sheet: sheet.name,
-                address: used.address.split("!")[1] ?? `${r + 1}:${c + 1}`,
+                address: cellAddressInUsedRange(used.address, r, c),
                 value
               });
             }
@@ -127,45 +148,71 @@ export class ExcelHost implements HostAdapter {
               matrix as string[][];
           }
         } else if (change.op === "createTable") {
-          context.workbook.tables.add(`${change.sheet}!${change.address}`, true);
+          context.workbook.tables.add(sheetQualifiedAddress(change.sheet, change.address), true);
         } else if (change.op === "createChart") {
           const sheet = context.workbook.worksheets.getItem(change.sheet);
           const type = mapChart(change.chartType);
-          sheet.charts.add(type, sheet.getRange(change.source));
+          sheet.charts.add(type, sheet.getRange(canonicalizeExcelAddress(change.source)));
+          sheet.getRange("A1").select();
         } else if (change.op === "formatRange") {
-          const range = context.workbook.worksheets.getItem(change.sheet).getRange(change.address);
-          if (change.bold) range.format.font.bold = true;
-          if (change.numberFormat) {
-            const { r1, c1, r2, c2 } = addressToBounds(change.address);
-            const rows = r2 - r1 + 1;
-            const cols = c2 - c1 + 1;
-            range.numberFormat = Array.from({ length: rows }, () =>
-              Array.from({ length: cols }, () => change.numberFormat as string)
-            );
-          }
+          await applyFormatRange(context, change);
         } else if (change.op === "clearRange") {
-          const range = context.workbook.worksheets.getItem(change.sheet).getRange(change.address);
+          const range = context.workbook.worksheets
+            .getItem(change.sheet)
+            .getRange(canonicalizeExcelAddress(change.address));
           if (change.clearType === "formats") range.clear(Excel.ClearApplyTo.formats);
           else if (change.clearType === "all") range.clear(Excel.ClearApplyTo.all);
           else range.clear(Excel.ClearApplyTo.contents);
         } else if (change.op === "copyRange") {
           const sheet = context.workbook.worksheets.getItem(change.sheet);
-          sheet.getRange(change.dest).copyFrom(sheet.getRange(change.source));
+          sheet
+            .getRange(canonicalizeExcelAddress(change.dest))
+            .copyFrom(sheet.getRange(canonicalizeExcelAddress(change.source)));
         } else if (change.op === "modifySheet") {
           applySheetStructure(context, change);
         } else if (change.op === "modifyWorkbook") {
           applyWorkbookStructure(context, change);
         } else if (change.op === "resizeRange") {
-          const range = context.workbook.worksheets.getItem(change.sheet).getRange(change.address);
+          const range = context.workbook.worksheets
+            .getItem(change.sheet)
+            .getRange(canonicalizeExcelAddress(change.address));
           if (change.columnWidth != null) range.format.columnWidth = change.columnWidth;
           if (change.rowHeight != null) range.format.rowHeight = change.rowHeight;
         } else if (change.op === "createPivot") {
           const sheet = context.workbook.worksheets.getItem(change.sheet);
-          sheet.pivotTables.add("Pivot", sheet.getRange(change.source), sheet.getRange(change.dest));
+          sheet.pivotTables.add(
+            "Pivot",
+            sheet.getRange(canonicalizeExcelAddress(change.source)),
+            sheet.getRange(canonicalizeExcelAddress(change.dest))
+          );
         }
       }
       await context.sync();
     });
+  }
+}
+
+async function applyFormatRange(
+  context: Excel.RequestContext,
+  change: { sheet: string; address: string; bold?: boolean; numberFormat?: string }
+): Promise<void> {
+  const sheet = context.workbook.worksheets.getItem(change.sheet);
+  const local = canonicalizeExcelAddress(change.address);
+  const bounds = addressToBounds(local);
+  let used: { rows: number; cols: number } | undefined;
+  if (bounds.entireColumn || bounds.entireRow) {
+    const usedRange = sheet.getUsedRangeOrNullObject();
+    usedRange.load(["rowCount", "columnCount", "isNullObject"]);
+    await context.sync();
+    if (!usedRange.isNullObject) used = { rows: usedRange.rowCount, cols: usedRange.columnCount };
+  }
+  const spec = formatApplySpec(local, used);
+  const range = sheet.getRange(spec.address);
+  if (change.bold) range.format.font.bold = true;
+  if (change.numberFormat) {
+    range.load(["rowCount", "columnCount"]);
+    await context.sync();
+    range.numberFormat = numberFormatMatrix(range.rowCount, range.columnCount, change.numberFormat);
   }
 }
 
@@ -214,7 +261,8 @@ function applyWorkbookStructure(
   else if (change.operation === "rename" && change.sheet && change.newName) {
     context.workbook.worksheets.getItem(change.sheet).name = change.newName;
   } else if (change.operation === "duplicate" && change.sheet) {
-    context.workbook.worksheets.getItem(change.sheet).copy(Excel.WorksheetPositionType.end);
+    const copy = context.workbook.worksheets.getItem(change.sheet).copy(Excel.WorksheetPositionType.end);
+    if (change.newName) copy.name = change.newName;
   }
 }
 

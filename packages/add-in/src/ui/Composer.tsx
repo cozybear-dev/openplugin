@@ -1,6 +1,7 @@
 import {
   Button,
   Menu,
+  MenuDivider,
   MenuItem,
   MenuList,
   MenuPopover,
@@ -27,6 +28,9 @@ export function Composer(props: {
   onInsertSkill: (name: string) => void;
   onToggleWebSearch: (on: boolean) => void;
   onModelChange: (model: string) => void;
+  onManageSkills: () => void;
+  onSkillify: () => void;
+  canSkillify: boolean;
 }) {
   const names = props.skills.map((s) => s.name);
   const suggestions = slashSuggestions(props.value, names);
@@ -55,6 +59,7 @@ export function Composer(props: {
       <div className="op-composer-box">
         <Textarea
           aria-label="Message OpenPlugin"
+          data-testid="composer-input"
           value={props.value}
           disabled={props.disabled}
           textarea={{ className: "op-composer-input" }}
@@ -90,6 +95,11 @@ export function Composer(props: {
                     </MenuItem>
                   ))
                 )}
+                <MenuDivider />
+                <MenuItem onClick={props.onManageSkills}>Manage skills…</MenuItem>
+                <MenuItem disabled={!props.canSkillify} onClick={props.onSkillify}>
+                  Save chat as skill
+                </MenuItem>
               </MenuList>
             </MenuPopover>
           </Menu>
@@ -105,11 +115,12 @@ export function Composer(props: {
           </ToggleButton>
           {props.busy ? (
             <Tooltip content="Stop" relationship="label">
-              <Button appearance="subtle" icon={<Square24Filled />} onClick={props.onStop} />
+              <Button data-testid="composer-stop" appearance="subtle" icon={<Square24Filled />} onClick={props.onStop} />
             </Tooltip>
           ) : (
             <Button
               className="op-send"
+              data-testid="composer-send"
               aria-label="Send message"
               appearance="primary"
               icon={<Send24Regular />}

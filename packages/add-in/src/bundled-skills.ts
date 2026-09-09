@@ -8,11 +8,15 @@ function skill(md: string, folder: string): Skill {
   return parseSkillMarkdown(md, folder);
 }
 
-export function bundledSkills(): SkillRegistry {
-  return SkillRegistry.fromSkills([
+export function bundledSkillList(): Skill[] {
+  return [
     skill(selectionRewrite, "selection-rewrite"),
     skill(excelRangeCleanup, "excel-range-cleanup"),
     skill(wordMemoFromSheet, "word-memo-from-sheet"),
     skill(pptOutlineToSlides, "ppt-outline-to-slides")
-  ]);
+  ];
+}
+
+export function bundledSkills(): SkillRegistry {
+  return SkillRegistry.fromSkills(bundledSkillList());
 }

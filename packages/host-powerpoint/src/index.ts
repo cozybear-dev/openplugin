@@ -30,12 +30,29 @@ export class PowerPointHost implements HostAdapter {
       });
 
       const selected = await getSelectedText();
+      let slideIndex = 0;
+      try {
+        const presentation = context.presentation as PowerPoint.Presentation & {
+          getSelectedSlides?: () => { load: (p: string) => void; items: Array<{ id?: string }> };
+        };
+        if (typeof presentation.getSelectedSlides === "function") {
+          const picked = presentation.getSelectedSlides();
+          picked.load("items");
+          slides.load("items/id");
+          await context.sync();
+          const id = picked.items[0]?.id;
+          const idx = slides.items.findIndex((s) => (s as { id?: string }).id === id);
+          if (idx >= 0) slideIndex = idx;
+        }
+      } catch {
+        slideIndex = 0;
+      }
       return {
         host: "powerpoint",
         title: "Presentation",
         slides: outline,
         selection: {
-          slideIndex: 0,
+          slideIndex,
           text: selected.slice(0, 1000)
         }
       };
@@ -64,8 +81,25 @@ export class PowerPointHost implements HostAdapter {
   }
 
   async readNotes(slideIndex: number): Promise<string> {
-    // PowerPoint's JavaScript API types do not expose slide notes.
-    return "";
+    return PowerPoint.run(async (context) => {
+      const slide = context.presentation.slides.getItemAt(slideIndex) as PowerPoint.Slide & {
+        notesSlide?: { shapes: { load: (p: string) => void; items: Array<{ textFrame: { textRange: { text: string } } }> } };
+      };
+      const notes = slide.notesSlide;
+      if (!notes) return "";
+      notes.shapes.load("items/textFrame/textRange/text");
+      await context.sync();
+      return notes.shapes.items
+        .map((s) => {
+          try {
+            return s.textFrame.textRange.text ?? "";
+          } catch {
+            return "";
+          }
+        })
+        .filter(Boolean)
+        .join("\n");
+    });
   }
 
   async readSlide(slideIndex: number) {
@@ -107,17 +141,9 @@ export class PowerPointHost implements HostAdapter {
           slides.load("items");
           await context.sync();
           const slide = slides.items[slides.items.length - 1];
-          const titleBox = slide.shapes.addTextBox(change.title, { left: 40, top: 30, width: 600, height: 50 });
-          titleBox.textFrame.textRange.text = change.title;
-          if (change.bullets?.length) {
-            const body = slide.shapes.addTextBox(change.bullets.map((b) => `• ${b}`).join("\n"), {
-              left: 40,
-              top: 100,
-              width: 600,
-              height: 300
-            });
-            body.textFrame.textRange.text = change.bullets.map((b) => `• ${b}`).join("\n");
-          }
+          slide.shapes.load("items/name,items/textFrame/textRange/text");
+          await context.sync();
+          fillSlidePlaceholders(slide, change.title, change.bullets);
         } else if (change.op === "setShapeText") {
           const slide = context.presentation.slides.getItemAt(change.slideIndex);
           const shapes = slide.shapes;
@@ -130,40 +156,85 @@ export class PowerPointHost implements HostAdapter {
         } else if (change.op === "deleteSlide") {
           context.presentation.slides.getItemAt(change.slideIndex).delete();
         } else if (change.op === "setNotes") {
-          // PowerPoint's JavaScript API types do not expose slide notes.
+          await writeNotes(context, change.slideIndex, change.notes);
         } else if (change.op === "duplicateSlide") {
-          const src = context.presentation.slides.getItemAt(change.slideIndex);
-          src.shapes.load("items/textFrame/textRange/text");
-          await context.sync();
-          const slides = context.presentation.slides;
-          slides.add();
-          slides.load("items");
-          await context.sync();
-          const copy = slides.items[slides.items.length - 1];
-          const box = copy.shapes.addTextBox("", { left: 40, top: 30, width: 600, height: 300 });
-          box.textFrame.textRange.text = src.shapes.items
-            .map((s) => {
-              try {
-                return s.textFrame.textRange.text;
-              } catch {
-                return "";
-              }
-            })
-            .filter(Boolean)
-            .join("\n");
+          const src = context.presentation.slides.getItemAt(change.slideIndex) as PowerPoint.Slide & {
+            duplicate?: () => void;
+          };
+          if (typeof src.duplicate !== "function") {
+            throw new Error("duplicateSlide is not supported in this PowerPoint build.");
+          }
+          src.duplicate();
+        } else if (change.op === "reorderSlides") {
+          const slide = context.presentation.slides.getItemAt(change.from) as PowerPoint.Slide & {
+            moveTo?: (to: number) => void;
+          };
+          if (typeof slide.moveTo !== "function") {
+            throw new Error("reorderSlides is not supported in this PowerPoint build.");
+          }
+          slide.moveTo(change.to);
         } else if (change.op === "addChart") {
           const slide = context.presentation.slides.getItemAt(change.slideIndex);
-          const box = slide.shapes.addTextBox(`${change.chartType}: ${change.categories.join(", ")}`, {
-            left: 40,
-            top: 180,
-            width: 600,
-            height: 200
-          });
-          box.textFrame.textRange.text = `${change.chartType}: ${change.categories.join(", ")}`;
+          const shapes = slide.shapes as PowerPoint.ShapeCollection & {
+            addChart?: (...args: unknown[]) => unknown;
+          };
+          if (typeof shapes.addChart !== "function") {
+            throw new Error("PowerPoint charts are not available in this Office.js build.");
+          }
+          shapes.addChart(change.chartType, change.categories, change.series);
         }
       }
       await context.sync();
     });
+  }
+}
+
+function setShapeText(shape: { textFrame?: { textRange?: { text: string } } } | undefined, text: string): boolean {
+  try {
+    if (!shape?.textFrame?.textRange) return false;
+    shape.textFrame.textRange.text = text;
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function fillSlidePlaceholders(
+  slide: PowerPoint.Slide,
+  title: string,
+  bullets?: string[]
+): void {
+  const shapes = slide.shapes.items;
+  const titleShape = shapes.find((s) => /^title\b/i.test(s.name));
+  const bodyShape = shapes.find(
+    (s) => /subtitle|content|^body\b/i.test(s.name) && !/^title\b/i.test(s.name)
+  );
+  if (!setShapeText(titleShape, title)) {
+    const box = slide.shapes.addTextBox(title, { left: 40, top: 30, width: 600, height: 50 });
+    box.textFrame.textRange.text = title;
+  }
+  if (bullets?.length) {
+    const text = bullets.map((b) => `• ${b}`).join("\n");
+    if (!setShapeText(bodyShape, text)) {
+      const box = slide.shapes.addTextBox(text, { left: 40, top: 100, width: 600, height: 300 });
+      box.textFrame.textRange.text = text;
+    }
+  }
+}
+
+async function writeNotes(context: PowerPoint.RequestContext, slideIndex: number, notes: string): Promise<void> {
+  const slide = context.presentation.slides.getItemAt(slideIndex) as PowerPoint.Slide & {
+    notesSlide?: { shapes: { load: (p: string) => void; items: Array<{ textFrame: { textRange: { text: string } } }> } };
+  };
+  const notesSlide = slide.notesSlide;
+  if (!notesSlide) {
+    throw new Error("Speaker notes are not available in this PowerPoint build.");
+  }
+  notesSlide.shapes.load("items/textFrame/textRange/text");
+  await context.sync();
+  const shape = notesSlide.shapes.items[0];
+  if (!setShapeText(shape, notes)) {
+    throw new Error("Speaker notes are not available in this PowerPoint build.");
   }
 }
 

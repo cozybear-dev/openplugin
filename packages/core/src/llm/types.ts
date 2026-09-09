@@ -46,6 +46,7 @@ export type StreamEvent =
 
 export type ChatResult = {
   message: Extract<ChatMessage, { role: "assistant" }>;
+  finishReason?: string;
 };
 
 export type LlmErrorCode =

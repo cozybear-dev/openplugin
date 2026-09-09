@@ -182,4 +182,35 @@ describe("chatCompletions", () => {
     controller.abort();
     await expect(pending).rejects.toMatchObject({ code: "abort" });
   });
+
+  it("returns finish_reason from an SSE choice", async () => {
+    const fetchImpl: typeof fetch = async () =>
+      sseResponse([
+        'data: {"choices":[{"delta":{"content":"Section one."},"finish_reason":"length"}]}\n\n',
+        "data: [DONE]\n\n"
+      ]);
+    const result = await chatCompletions({ config, messages, fetchImpl });
+    expect(result.message.content).toBe("Section one.");
+    expect(result.finishReason).toBe("length");
+  });
+
+  it("returns finish_reason from a non-stream JSON body", async () => {
+    const fetchImpl: typeof fetch = async () =>
+      new Response(
+        JSON.stringify({
+          choices: [{ message: { role: "assistant", content: "Hi" }, finish_reason: "stop" }]
+        }),
+        { headers: { "Content-Type": "application/json" } }
+      );
+    const result = await chatCompletions({ config, messages, stream: false, fetchImpl });
+    expect(result.finishReason).toBe("stop");
+  });
+
+  it("isTruncatedFinish treats length and max_tokens as truncated", async () => {
+    const { isTruncatedFinish } = await import("../src/llm/client.js");
+    expect(isTruncatedFinish("length")).toBe(true);
+    expect(isTruncatedFinish("max_tokens")).toBe(true);
+    expect(isTruncatedFinish("stop")).toBe(false);
+    expect(isTruncatedFinish(undefined)).toBe(false);
+  });
 });

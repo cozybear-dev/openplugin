@@ -1,5 +1,6 @@
 import type { Changeset } from "../tools/changeset.js";
 import {
+  canonicalizeExcelAddress,
   sliceGrid,
   truncateGrid,
   writeIntoGrid,
@@ -16,6 +17,7 @@ export class FakeExcelHost implements HostAdapter {
     Sheet1: { name: "Sheet1", values: [["", ""], ["", ""]], tables: [], charts: [] }
   };
   selection: ExcelSelection = { sheet: "Sheet1", address: "A1", values: [[""]] };
+  formats: Array<{ sheet: string; address: string; numberFormat?: string; bold?: boolean }> = [];
 
   async getRawFacts(): Promise<RawFacts> {
     return {
@@ -76,6 +78,15 @@ export class FakeExcelHost implements HostAdapter {
         const sheet = this.ensureSheet(change.sheet);
         sheet.charts ??= [];
         sheet.charts.push({ name: `${change.chartType}-${sheet.charts.length + 1}` });
+      } else if (change.op === "formatRange") {
+        this.formats.push({
+          sheet: change.sheet,
+          address: canonicalizeExcelAddress(change.address),
+          numberFormat: change.numberFormat,
+          bold: change.bold
+        });
+      } else if (change.op === "modifySheet") {
+        applyFakeSheetStructure(this.ensureSheet(change.sheet), change);
       } else if (change.op === "clearRange") {
         const sheet = this.ensureSheet(change.sheet);
         const grid = sliceGrid(sheet.values, change.address);
@@ -113,6 +124,42 @@ export class FakeExcelHost implements HostAdapter {
     this.sheets[name] ??= { name, values: [], tables: [], charts: [] };
     return this.sheets[name];
   }
+}
+
+function applyFakeSheetStructure(
+  sheet: ExcelSheet,
+  change: { operation: string; dimension?: string; reference?: string; count?: number }
+): void {
+  if (change.operation !== "insert" && change.operation !== "delete") return;
+  const count = change.count ?? 1;
+  if (change.dimension === "columns") {
+    const at = colIndexFromRef(change.reference);
+    for (const row of sheet.values) {
+      if (change.operation === "insert") row.splice(at, 0, ...Array.from({ length: count }, () => ""));
+      else row.splice(at, count);
+    }
+    return;
+  }
+  const at = rowIndexFromRef(change.reference);
+  if (change.operation === "insert") {
+    const width = sheet.values.reduce((m, row) => Math.max(m, row.length), 0);
+    const inserted = Array.from({ length: count }, () => Array.from({ length: width }, () => ""));
+    sheet.values.splice(at, 0, ...inserted);
+  } else {
+    sheet.values.splice(at, count);
+  }
+}
+
+function rowIndexFromRef(reference?: string): number {
+  const n = Number((reference ?? "1").match(/\d+/)?.[0] ?? "1");
+  return Math.max(0, n - 1);
+}
+
+function colIndexFromRef(reference?: string): number {
+  const letters = ((reference ?? "A").match(/[A-Za-z]+/)?.[0] ?? "A").toUpperCase();
+  let c = 0;
+  for (const ch of letters) c = c * 26 + (ch.charCodeAt(0) - 64);
+  return Math.max(0, c - 1);
 }
 
 function col(index: number): string {

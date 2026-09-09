@@ -32,6 +32,14 @@ npm run start:excel
 
 `start:word` and `start:powerpoint` sideload the same add-in into the other hosts.
 
+To drive the sideloaded task pane from the CLI (WebView2 CDP — used by the coding agent, not a substitute for `npm test`):
+
+```bash
+npm run live -- excel start --force
+npm run live -- excel ui screenshot
+npm run test:live                 # Excel smoke: mock LLM → apply → assert a cell
+```
+
 On first run, Office will trust a local HTTPS certificate from `office-addin-dev-certs`. Then:
 
 1. Open the **OpenPlugin** ribbon tab → **Open**
@@ -127,14 +135,18 @@ OSS builds have **no telemetry**.
 
 ## Skills
 
-Skills live under `skills/` and follow the Agent Skills spec (`SKILL.md` + YAML frontmatter). Bundled in v0.1:
+Skills follow the [Agent Skills](https://agentskills.io/specification) spec (`SKILL.md` + YAML frontmatter). Bundled in v0.1:
 
 - `selection-rewrite`
 - `excel-range-cleanup`
 - `word-memo-from-sheet`
 - `ppt-outline-to-slides`
 
-Author a new folder, add `name` / `description`, and set `metadata.openplugin/hosts` to the hosts it supports.
+In the task pane, open **Skills** (puzzle icon) to list, enable, edit, duplicate, export, or delete user skills. **Save chat as skill** (composer Skills menu) drafts a skill from the current thread for you to review. Import a URL or paste a `SKILL.md` from that pane.
+
+In the task pane, **History** (clock) lists saved chats for this Office host. **New chat** archives the current thread instead of deleting it. Rename or delete from that list. Chats are stored in this Office profile (IndexedDB).
+
+Repo authors can still add a folder under `skills/` with `name` / `description` and `metadata.openplugin/hosts`. User skills are stored in this Office profile (IndexedDB), not in the repo.
 
 ## Repo
 
@@ -145,6 +157,7 @@ packages/companion     Loopback CORS/Ollama proxy + audit + policy
 packages/host-excel    Office.js Excel adapter
 packages/host-word     Office.js Word adapter
 packages/host-powerpoint
+packages/live          WebView2 CDP driver for real Excel/Word/PowerPoint
 packages/enterprise    Policy format, AppSource notes (commercial)
 skills/                Bundled Agent Skills
 pictures/              Task pane and settings screenshots
@@ -160,4 +173,4 @@ See `CLA.md` if you contribute.
 
 ## Status
 
-Sideloadable agent with a review-first task pane, OpenRouter / Ollama / custom presets, Excel `OP.PROMPT` / `OP.MAP` / `OP.EXTRACT` / `OP.TRANSLATE` functions, a loopback companion, and tenant `policy.json` via the companion. Tests run without Office (`npm test`).
+Sideloadable agent with a review-first task pane, OpenRouter / Ollama / custom presets, Excel `OP.PROMPT` / `OP.MAP` / `OP.EXTRACT` / `OP.TRANSLATE` functions, a loopback companion, and tenant `policy.json` via the companion. Unit tests run without Office (`npm test`). Real-host checks: `npm run live -- excel start --force` (Word/PowerPoint too) or `npm run test:live`.

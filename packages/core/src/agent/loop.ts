@@ -1,6 +1,6 @@
 import { compileSnapshot, snapshotToPrompt, type DocumentSnapshot } from "../context/compiler.js";
 import type { HostAdapter } from "../hosts/types.js";
-import { chatCompletions } from "../llm/client.js";
+import { chatCompletions, isTruncatedFinish } from "../llm/client.js";
 import type { ChatMessage, ProviderConfig, ToolCall } from "../llm/types.js";
 import { assertPolicy, OPEN_POLICY, type Policy } from "../policy.js";
 import {
@@ -14,6 +14,9 @@ import type { SkillRegistry } from "../skills/registry.js";
 import { Changeset } from "../tools/changeset.js";
 import { describeActivity, type ActivityKind } from "../tools/describe.js";
 import { executeHostTool, listToolDefinitions } from "../tools/registry.js";
+
+export const CONTINUE_NUDGE =
+  "Continue. If document work remains, use tools. If you are finished, reply with your final answer only.";
 
 export const SYSTEM_PROMPT = `You are OpenPlugin, an agent that edits Microsoft Office documents through typed tools.
 
@@ -74,7 +77,7 @@ export async function runAgent(opts: {
   previousSnapshot?: DocumentSnapshot;
   webSearch?: WebSearchOptions;
 }): Promise<AgentResult> {
-  const maxSteps = opts.maxSteps ?? 8;
+  const maxSteps = opts.maxSteps ?? 16;
   const policy = opts.policy ?? OPEN_POLICY;
   assertPolicy(policy, {
     baseUrl: opts.config.baseUrl,
@@ -132,6 +135,8 @@ export async function runAgent(opts: {
   });
   let finalText = "";
   let steps = 0;
+  let nudged = false;
+  let usedTools = false;
 
   for (; steps < maxSteps; steps++) {
     if (opts.signal?.aborted) {
@@ -151,31 +156,49 @@ export async function runAgent(opts: {
 
     messages.push(result.message);
     const calls = result.message.role === "assistant" ? result.message.tool_calls : undefined;
-    if (!calls || calls.length === 0) {
-      finalText = (result.message.role === "assistant" && result.message.content) || "";
-      return { finalText, changeset, messages, loadedSkills, steps: steps + 1, stopReason: "final", snapshot };
+    const content =
+      result.message.role === "assistant" && typeof result.message.content === "string"
+        ? result.message.content
+        : "";
+
+    if (calls && calls.length > 0) {
+      usedTools = true;
+      for (const call of calls) {
+        const toolResult = await dispatchTool(call, {
+          host: opts.host,
+          skills: opts.skills,
+          changeset,
+          loadedSkills,
+          onEvent: opts.onEvent,
+          policy,
+          baseUrl: opts.config.baseUrl,
+          model: opts.config.model,
+          fetchImpl: opts.fetchImpl,
+          webSearch: opts.webSearch,
+          searchResolved
+        });
+        messages.push({
+          role: "tool",
+          tool_call_id: call.id,
+          content: typeof toolResult === "string" ? toolResult : JSON.stringify(toolResult)
+        });
+      }
+      continue;
     }
 
-    for (const call of calls) {
-      const toolResult = await dispatchTool(call, {
-        host: opts.host,
-        skills: opts.skills,
-        changeset,
-        loadedSkills,
-        onEvent: opts.onEvent,
-        policy,
-        baseUrl: opts.config.baseUrl,
-        model: opts.config.model,
-        fetchImpl: opts.fetchImpl,
-        webSearch: opts.webSearch,
-        searchResolved
-      });
-      messages.push({
-        role: "tool",
-        tool_call_id: call.id,
-        content: typeof toolResult === "string" ? toolResult : JSON.stringify(toolResult)
-      });
+    if (content) finalText += content;
+
+    if (isTruncatedFinish(result.finishReason)) {
+      continue;
     }
+
+    if (!nudged && steps === 0 && !usedTools && changeset.isEmpty() && content) {
+      nudged = true;
+      messages.push({ role: "user", content: CONTINUE_NUDGE });
+      continue;
+    }
+
+    return { finalText, changeset, messages, loadedSkills, steps: steps + 1, stopReason: "final", snapshot };
   }
 
   return { finalText, changeset, messages, loadedSkills, steps, stopReason: "max_steps", snapshot };

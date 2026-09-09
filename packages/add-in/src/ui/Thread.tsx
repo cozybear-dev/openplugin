@@ -1,8 +1,10 @@
 import { Button, Caption1, Spinner, Tooltip } from "@fluentui/react-components";
 import { ArrowCounterclockwise24Regular } from "@fluentui/react-icons";
 import type { HostKind } from "@openplugin/core";
+import { useLayoutEffect, useRef } from "react";
 import type { StoredLine } from "../history";
 import { MarkdownMessage } from "./MarkdownMessage";
+import { isPinnedToBottom, scrollToBottom } from "./scroll";
 
 export function Thread(props: {
   hostKind: HostKind;
@@ -10,8 +12,28 @@ export function Thread(props: {
   busy: boolean;
   onRestore?: (userLineIndex: number) => void;
 }) {
+  const scrollerRef = useRef<HTMLDivElement>(null);
+  const pinRef = useRef(true);
+  const prevCountRef = useRef(props.lines.length);
+
+  useLayoutEffect(() => {
+    const el = scrollerRef.current;
+    if (!el) return;
+    const last = props.lines[props.lines.length - 1];
+    if (last?.kind === "user" && props.lines.length > prevCountRef.current) pinRef.current = true;
+    prevCountRef.current = props.lines.length;
+    if (pinRef.current) scrollToBottom(el);
+  }, [props.lines, props.busy]);
+
   return (
-    <div className="op-thread">
+    <div
+      className="op-thread"
+      ref={scrollerRef}
+      onScroll={() => {
+        const el = scrollerRef.current;
+        if (el) pinRef.current = isPinnedToBottom(el);
+      }}
+    >
       {props.lines.map((line, i) => (
         <article key={i} className={`op-msg op-msg-${line.kind}`}>
           {line.kind === "activity" || line.kind === "tool" ? (

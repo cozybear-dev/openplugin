@@ -1,17 +1,26 @@
 import {
   applyChangeset as applyHostChangeset,
+  applyFailureMessage,
   assertPolicy,
   Changeset,
+  chatCompletions,
   compileSnapshot,
+  extractSkillMarkdown,
   listModels,
   LlmError,
   mergePolicy,
   OPEN_POLICY,
+  parseSkillMarkdown,
   parseSlash,
   planRestore,
   resolveRestorePoint,
   applyRestoreUndos,
   runAgent,
+  serializeSkill,
+  skillifyMessages,
+  skillsForAgent,
+  stubSkillMarkdown,
+  uniqueSkillName,
   type AgentResult,
   type ChatMessage,
   type DocumentSnapshot,
@@ -20,15 +29,27 @@ import {
   type Policy,
   type ProviderConfig,
   type RestorePoint,
-  type SearchResult,
-  type Skill
+  type SearchResult
 } from "@openplugin/core";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { appendAuditLocal, documentIdentity, loadAudit, programName, type AuditEntry } from "./audit";
-import { bundledSkills } from "./bundled-skills";
+import { bundledSkillList } from "./bundled-skills";
 import { fetchPolicy, postAudit, postSearch, probeCompanion, type CompanionStatus } from "./companion";
 import { debugLog, subscribeDebug, type DebugEvent } from "./debug";
-import { clearHistory, loadHistory, saveHistory, type StoredLine } from "./history";
+import {
+  applyAutoTitle,
+  conversationHasContent,
+  deleteConversation,
+  emptyConversation,
+  listConversations,
+  loadActiveId,
+  migrateLegacyHistory,
+  saveActiveId,
+  saveConversation,
+  visibleConversations,
+  type ConversationRecord
+} from "./conversation-store";
+import { loadHistory, type StoredLine } from "./history";
 import { COMPANION_ORIGIN, isOllamaUrl, isOpenRouterUrl } from "./presets";
 import { loadRevisions, pushRevision, saveRevisions, type AppliedRevision } from "./revisions";
 import { createHost } from "./runtime-host";
@@ -42,30 +63,42 @@ import {
   saveSearchSettings
 } from "./settings";
 import {
+  downloadSkillMarkdown,
   importCatalog,
   importSkillFromMarkdown,
   importSkillFromUrl,
   listImportedSkills,
   loadDisabledSkills,
+  mergeSkillCatalog,
+  mergeStoredRecords,
   removeImportedSkill,
-  saveDisabledSkills
+  saveDisabledSkills,
+  saveImportedSkill,
+  toStoredRecord,
+  type StoredSkillRecord
 } from "./skill-store";
+import { installLiveBridge, type LiveBridgeApi } from "./live-bridge";
+import { maxStepsLine, shouldShowTimeout, timeoutLine } from "./turn-status";
 import { Composer } from "./ui/Composer";
 import { EmptyState } from "./ui/EmptyState";
 import { formatError, SettingsPanel } from "./ui/SettingsPanel";
 import { Header } from "./ui/Header";
+import { HistoryPanel } from "./ui/HistoryPanel";
+import { SkillsPanel, type SkillEditorState } from "./ui/SkillsPanel";
 import { RestoreDialog } from "./ui/RestoreDialog";
 import { AppliedBar, ReviewPanel } from "./ui/ReviewCard";
 import { Thread } from "./ui/Thread";
 
 export function App(props: { hostKind: HostKind; inOffice: boolean }) {
   const host = useMemo(() => createHost(props.hostKind, props.inOffice), [props.hostKind, props.inOffice]);
-  const [imported, setImported] = useState<Skill[]>([]);
-  const skills = useMemo(() => {
-    const reg = bundledSkills();
-    for (const s of imported) reg.add(s);
-    return reg;
-  }, [imported]);
+  const [imported, setImported] = useState<StoredSkillRecord[]>([]);
+  const managedSkills = useMemo(() => mergeSkillCatalog(bundledSkillList(), imported), [imported]);
+  const [disabledSkills, setDisabledSkills] = useState<string[]>(() => loadDisabledSkills());
+  const [policy, setPolicy] = useState<Policy>(OPEN_POLICY);
+  const skills = useMemo(
+    () => skillsForAgent(managedSkills, { disabled: disabledSkills, allowedSkills: policy.allowedSkills }),
+    [managedSkills, disabledSkills, policy.allowedSkills]
+  );
 
   const [provider, setProvider] = useState<ProviderConfig>(loadProvider);
   const [chatModel, setChatModel] = useState(() => loadProvider().model);
@@ -75,13 +108,16 @@ export function App(props: { hostKind: HostKind; inOffice: boolean }) {
   const [modelsTick, setModelsTick] = useState(0);
   const [instructions, setInstructions] = useState(loadInstructions);
   const [companion, setCompanion] = useState<CompanionStatus>({ state: "unknown" });
-  const [policy, setPolicy] = useState<Policy>(OPEN_POLICY);
-  const [tab, setTab] = useState<"chat" | "settings">("chat");
+  const [tab, setTab] = useState<"chat" | "settings" | "skills" | "history">("chat");
+  const [skillEditor, setSkillEditor] = useState<SkillEditorState | null>(null);
   const [input, setInput] = useState("");
   const loaded = useMemo(() => loadHistory(props.hostKind), [props.hostKind]);
   const [lines, setLines] = useState<StoredLine[]>(() => loaded.lines);
   const [history, setHistory] = useState<ChatMessage[]>(() => loaded.messages);
   const [restorePoints, setRestorePoints] = useState<RestorePoint[]>(() => loaded.restorePoints);
+  const [conversations, setConversations] = useState<ConversationRecord[]>([]);
+  const [activeId, setActiveId] = useState("");
+  const [historyError, setHistoryError] = useState<string | null>(null);
   const [searchSettings, setSearchSettings] = useState(loadSearchSettings);
   const [webSearch, setWebSearch] = useState(() => loadSearchSettings().defaultEnabled);
   const [debug, setDebug] = useState<DebugEvent[]>([]);
@@ -91,7 +127,6 @@ export function App(props: { hostKind: HostKind; inOffice: boolean }) {
   const [alwaysApply, setAlwaysApply] = useState(false);
   const [revisions, setRevisions] = useState<AppliedRevision[]>(() => loadRevisions());
   const [lastApplied, setLastApplied] = useState<AppliedRevision | null>(null);
-  const [disabledSkills, setDisabledSkills] = useState<string[]>(() => loadDisabledSkills());
   const [audit, setAudit] = useState<AuditEntry[]>(() => loadAudit());
   const [contextLabel, setContextLabel] = useState<string>(props.hostKind);
   const [snapshot, setSnapshot] = useState<DocumentSnapshot | undefined>();
@@ -99,16 +134,10 @@ export function App(props: { hostKind: HostKind; inOffice: boolean }) {
   const operationRef = useRef(0);
   const restoreRef = useRef<RestorePoint[]>(restorePoints);
   restoreRef.current = restorePoints;
+  const recordRef = useRef<ConversationRecord | null>(null);
   const [pendingRestore, setPendingRestore] = useState<number | null>(null);
 
-  const enabledSkills = useMemo(
-    () => skills.list(props.hostKind).filter((s) => !disabledSkills.includes(s.name)),
-    [skills, props.hostKind, disabledSkills]
-  );
-  const slashSkills = useMemo(
-    () => enabledSkills.filter((s) => s.userInvocable !== false),
-    [enabledSkills]
-  );
+  const slashSkills = useMemo(() => skills.listForSlash(props.hostKind), [skills, props.hostKind]);
   const activeModel = chatModel || provider.model;
   const modelOptions = useMemo(
     () => unionModels(models, provider.model, chatModel),
@@ -119,7 +148,44 @@ export function App(props: { hostKind: HostKind; inOffice: boolean }) {
 
   useEffect(() => {
     void (async () => {
-      setImported(await listImportedSkills().catch(() => []));
+      try {
+        await migrateLegacyHistory(props.hostKind);
+        let list = await listConversations(props.hostKind);
+        const storedId = loadActiveId(props.hostKind);
+        const found = storedId ? list.find((c) => c.id === storedId) : undefined;
+        const newest = [...list].sort((a, b) => Date.parse(b.updatedAt) - Date.parse(a.updatedAt))[0];
+        const current = found ?? newest ?? emptyConversation(props.hostKind);
+        if (!found) {
+          if (!newest) {
+            await saveConversation(current);
+            list = await listConversations(props.hostKind);
+            if (!list.some((c) => c.id === current.id)) list = [current, ...list];
+          }
+          saveActiveId(props.hostKind, current.id);
+        }
+        if (recordRef.current) {
+          setConversations(list);
+          setHistoryError(null);
+          return;
+        }
+        recordRef.current = current;
+        setActiveId(current.id);
+        setConversations(list);
+        setLines(current.lines);
+        setHistory(current.messages);
+        setRestorePoints(current.restorePoints);
+        restoreRef.current = current.restorePoints;
+        setHistoryError(null);
+      } catch {
+        setHistoryError("Chats could not be saved.");
+      }
+    })();
+  }, [props.hostKind]);
+
+  useEffect(() => {
+    void (async () => {
+      const stored = await listImportedSkills().catch(() => []);
+      setImported(stored);
       const status = await probeCompanion();
       setCompanion(status);
       if (status.state === "connected") {
@@ -128,8 +194,8 @@ export function App(props: { hostKind: HostKind; inOffice: boolean }) {
           const merged = mergePolicy(tenant, loadUserPolicy() ?? undefined);
           setPolicy(merged);
           if (merged.catalogUrl) {
-            const extra = await importCatalog(merged.catalogUrl).catch(() => []);
-            setImported((s) => [...s, ...extra]);
+            const extra = await importCatalog(merged.catalogUrl, stored).catch(() => []);
+            setImported((s) => mergeStoredRecords(s, extra));
           }
         }
       }
@@ -158,6 +224,27 @@ export function App(props: { hostKind: HostKind; inOffice: boolean }) {
     }
   }
 
+  function recordFromState(
+    nextLines: StoredLine[],
+    nextMessages: ChatMessage[],
+    nextPoints: RestorePoint[]
+  ): ConversationRecord {
+    const identity = documentIdentity();
+    const base = recordRef.current ?? emptyConversation(props.hostKind);
+    return applyAutoTitle(
+      {
+        ...base,
+        lines: nextLines,
+        messages: nextMessages,
+        restorePoints: nextPoints,
+        updatedAt: new Date().toISOString(),
+        documentTitle: identity.documentTitle ?? base.documentTitle,
+        documentUrl: identity.documentUrl ?? base.documentUrl
+      },
+      nextLines
+    );
+  }
+
   async function persist(
     nextLines: StoredLine[],
     nextMessages: ChatMessage[],
@@ -167,7 +254,134 @@ export function App(props: { hostKind: HostKind; inOffice: boolean }) {
     setLines(nextLines);
     setHistory(nextMessages);
     setRestorePoints(nextPoints);
-    await saveHistory(props.hostKind, nextLines, nextMessages, nextPoints);
+    const next = recordFromState(nextLines, nextMessages, nextPoints);
+    recordRef.current = next;
+    setActiveId(next.id);
+    setConversations((list) => [next, ...list.filter((c) => c.id !== next.id)]);
+    try {
+      await saveConversation(next);
+      saveActiveId(props.hostKind, next.id);
+      setHistoryError(null);
+    } catch {
+      setHistoryError("Chats could not be saved.");
+    }
+  }
+
+  function stopTurn() {
+    operationRef.current += 1;
+    abortRef.current?.abort();
+    setBusy(false);
+    abortRef.current = null;
+    setPending(null);
+  }
+
+  async function startNewChat() {
+    stopTurn();
+    setChatModel(provider.model);
+    setWebSearch(searchSettings.defaultEnabled);
+    if (!conversationHasContent(lines)) {
+      setTab("chat");
+      return;
+    }
+    try {
+      await persist(lines, history, restoreRef.current);
+    } catch {
+      setHistoryError("Chats could not be saved.");
+    }
+    const created = emptyConversation(props.hostKind);
+    recordRef.current = created;
+    saveActiveId(props.hostKind, created.id);
+    setActiveId(created.id);
+    setLines([]);
+    setHistory([]);
+    setRestorePoints([]);
+    restoreRef.current = [];
+    setConversations((list) => [created, ...list.filter((c) => c.id !== created.id)]);
+    setTab("chat");
+    try {
+      await saveConversation(created);
+      setHistoryError(null);
+    } catch {
+      setHistoryError("Chats could not be saved.");
+    }
+  }
+
+  async function selectConversation(id: string) {
+    if (id === activeId) {
+      setTab("chat");
+      return;
+    }
+    stopTurn();
+    try {
+      await persist(lines, history, restoreRef.current);
+    } catch {
+      setHistoryError("Chats could not be saved.");
+    }
+    let list = conversations;
+    try {
+      list = await listConversations(props.hostKind);
+      setConversations(list);
+    } catch {
+      setHistoryError("Chats could not be saved.");
+    }
+    const next = list.find((c) => c.id === id);
+    if (!next) return;
+    recordRef.current = next;
+    saveActiveId(props.hostKind, next.id);
+    setActiveId(next.id);
+    setLines(next.lines);
+    setHistory(next.messages);
+    setRestorePoints(next.restorePoints);
+    restoreRef.current = next.restorePoints;
+    setTab("chat");
+  }
+
+  async function renameConversation(id: string, title: string) {
+    const apply = (record: ConversationRecord): ConversationRecord =>
+      record.id === id ? { ...record, title, titleSource: "user" as const } : record;
+    if (recordRef.current) recordRef.current = apply(recordRef.current);
+    setConversations((list) => list.map(apply));
+    const target = (recordRef.current?.id === id ? recordRef.current : conversations.find((c) => c.id === id));
+    if (!target) return;
+    try {
+      await saveConversation(apply(target));
+      setHistoryError(null);
+    } catch {
+      setHistoryError("Chats could not be saved.");
+    }
+  }
+
+  async function removeConversation(id: string) {
+    stopTurn();
+    try {
+      await deleteConversation(id);
+      setHistoryError(null);
+    } catch {
+      setHistoryError("Chats could not be saved.");
+    }
+    const remaining = conversations.filter((c) => c.id !== id);
+    if (id !== activeId) {
+      setConversations(remaining);
+      return;
+    }
+    const next =
+      remaining.find((c) => conversationHasContent(c.lines)) ?? emptyConversation(props.hostKind);
+    recordRef.current = next;
+    saveActiveId(props.hostKind, next.id);
+    setActiveId(next.id);
+    setLines(next.lines);
+    setHistory(next.messages);
+    setRestorePoints(next.restorePoints);
+    restoreRef.current = next.restorePoints;
+    setConversations(remaining.some((c) => c.id === next.id) ? remaining : [next, ...remaining]);
+    if (!remaining.some((c) => c.id === next.id)) {
+      try {
+        await saveConversation(next);
+      } catch {
+        setHistoryError("Chats could not be saved.");
+      }
+    }
+    setTab("chat");
   }
 
   function log(action: AuditEntry["action"], summary: string, extra?: Partial<AuditEntry>) {
@@ -339,7 +553,12 @@ export function App(props: { hostKind: HostKind; inOffice: boolean }) {
       await finishTurn(nextLines, result, operation);
     } catch (err) {
       if (operation !== operationRef.current) return;
-      if (err instanceof LlmError && err.code === "abort") return;
+      if (err instanceof LlmError && err.code === "abort") {
+        if (shouldShowTimeout(err, controller.signal.aborted)) {
+          setLines((l) => [...l, { kind: "error", text: timeoutLine() }]);
+        }
+        return;
+      }
       if (err instanceof LlmError && err.code === "cors") {
         let status = companion;
         if (status.state !== "connected") status = await probeCompanion();
@@ -352,7 +571,12 @@ export function App(props: { hostKind: HostKind; inOffice: boolean }) {
             return;
           } catch (retryErr) {
             if (operation !== operationRef.current) return;
-            if (retryErr instanceof LlmError && retryErr.code === "abort") return;
+            if (retryErr instanceof LlmError && retryErr.code === "abort") {
+              if (shouldShowTimeout(retryErr, controller.signal.aborted)) {
+                setLines((l) => [...l, { kind: "error", text: timeoutLine() }]);
+              }
+              return;
+            }
             setLines([...nextLines, { kind: "error", text: formatError(retryErr, true) }]);
             setBusy(false);
             return;
@@ -370,7 +594,7 @@ export function App(props: { hostKind: HostKind; inOffice: boolean }) {
 
   async function runTurn(userMessage: string, config: ProviderConfig, signal: AbortSignal) {
     return runAgent({
-      config: { ...config, model: chatModel || provider.model },
+      config: { ...config, model: chatModel || provider.model, maxOutputTokens: 8192 },
       host,
       skills,
       userMessage,
@@ -432,10 +656,14 @@ export function App(props: { hostKind: HostKind; inOffice: boolean }) {
     const withFinal = result.finalText
       ? appendAssistant(baseLines, result.finalText)
       : linesRefTail(baseLines);
+    const toPersist =
+      result.stopReason === "max_steps"
+        ? [...withFinal, { kind: "error" as const, text: maxStepsLine(result.steps) }]
+        : withFinal;
     const msgs = result.messages.filter(
       (m): m is ChatMessage => m.role === "user" || m.role === "assistant" || m.role === "tool"
     );
-    await persist(withFinal, msgs);
+    await persist(toPersist, msgs);
     setSnapshot(result.snapshot);
     if (companion.state === "connected" && policy.audit?.enabled) {
       void postAudit(companion.token, {
@@ -472,7 +700,7 @@ export function App(props: { hostKind: HostKind; inOffice: boolean }) {
   async function applyChangeset(cs: Changeset) {
     const results = await applyHostChangeset(host, cs);
     const succeeded = results.filter((r) => r.ok);
-    const failed = results.filter((r) => !r.ok);
+    const failed = results.filter((r): r is Extract<(typeof results)[number], { ok: false }> => !r.ok);
     if (succeeded.length) {
       const applied = new Changeset();
       for (const r of succeeded) applied.add(r.change);
@@ -492,9 +720,9 @@ export function App(props: { hostKind: HostKind; inOffice: boolean }) {
       log("apply", summary);
     }
     if (failed.length) {
-      const detail = failed.map((r) => r.error).join("; ");
-      setLines((l) => [...l, { kind: "error", text: `Could not apply ${failed.length} change(s): ${detail}` }]);
-      log("error", `Apply failed: ${detail}`);
+      const msg = applyFailureMessage(succeeded, failed);
+      setLines((l) => [...l, { kind: "error", text: msg.text }]);
+      log(msg.kind === "warning" ? "apply" : "error", msg.text);
     }
     return { succeeded, failed };
   }
@@ -610,39 +838,179 @@ export function App(props: { hostKind: HostKind; inOffice: boolean }) {
     }
   }
 
+  async function completeText(messages: ChatMessage[]) {
+    const useCompanionFirst = isOllamaUrl(provider.baseUrl) && companion.state === "connected";
+    try {
+      return await chatCompletions({
+        config: {
+          ...effectiveConfig(provider, useCompanionFirst),
+          model: activeModel,
+          maxOutputTokens: 2048
+        },
+        messages,
+        stream: false
+      });
+    } catch (err) {
+      if (err instanceof LlmError && err.code === "cors") {
+        let status = companion;
+        if (status.state !== "connected") status = await probeCompanion();
+        setCompanion(status);
+        if (status.state === "connected" && !useCompanionFirst) {
+          return await chatCompletions({
+            config: {
+              ...effectiveConfig(provider, true, status),
+              model: activeModel,
+              maxOutputTokens: 2048
+            },
+            messages,
+            stream: false
+          });
+        }
+      }
+      throw err;
+    }
+  }
+
+  async function persistSkill(markdown: string, previousName?: string) {
+    const folder = markdown.match(/^name:\s*([a-z0-9-]+)/m)?.[1] ?? "imported-skill";
+    const skill = parseSkillMarkdown(markdown, folder);
+    if (previousName && previousName !== skill.name) await removeImportedSkill(previousName);
+    const record = toStoredRecord(skill, { markdown, origin: "imported" });
+    await saveImportedSkill(record);
+    setImported((s) => {
+      const without = s.filter((x) => x.name !== skill.name && x.name !== previousName);
+      return mergeStoredRecords(without, [record]);
+    });
+    setSkillEditor(null);
+  }
+
+  function newSkill() {
+    const name = uniqueSkillName(
+      "new-skill",
+      managedSkills.map((s) => s.name)
+    );
+    setSkillEditor({
+      markdown: stubSkillMarkdown({ host: props.hostKind, name }),
+      mode: "create",
+      generating: false,
+      error: null
+    });
+  }
+
+  async function skillifyChat() {
+    setTab("skills");
+    const taken = managedSkills.map((s) => s.name);
+    const name = uniqueSkillName("from-chat", taken);
+    const transcript = lines
+      .filter((l): l is Extract<StoredLine, { kind: "user" | "assistant" }> => l.kind === "user" || l.kind === "assistant")
+      .map((l) => ({ role: l.kind, text: l.text }));
+    const notes = transcript
+      .slice(-6)
+      .map((t) => `${t.role}: ${t.text}`)
+      .join("\n");
+    setSkillEditor({
+      markdown: stubSkillMarkdown({ host: props.hostKind, name, notes }),
+      mode: "skillify",
+      generating: true,
+      error: null
+    });
+    if (!provider.baseUrl || !activeModel) {
+      setSkillEditor((e) =>
+        e
+          ? { ...e, generating: false, error: "Connect a model to draft from chat, or write the skill yourself." }
+          : e
+      );
+      return;
+    }
+    try {
+      const messages = skillifyMessages({ host: props.hostKind, transcript, existingNames: taken });
+      const result = await completeText(messages);
+      const content = typeof result.message.content === "string" ? result.message.content : "";
+      let md = extractSkillMarkdown(content);
+      const parsedName = md.match(/^name:\s*([a-z0-9-]+)/m)?.[1] ?? name;
+      const parsed = parseSkillMarkdown(md, parsedName);
+      const unique = uniqueSkillName(parsed.name, taken);
+      if (unique !== parsed.name) md = serializeSkill({ ...parsed, name: unique, rootPath: unique });
+      setSkillEditor({ markdown: md, mode: "skillify", generating: false, error: null });
+    } catch (err) {
+      setSkillEditor((e) =>
+        e ? { ...e, generating: false, error: formatError(err, companion.state === "connected") } : e
+      );
+    }
+  }
+
+  const liveApi = useRef<LiveBridgeApi | null>(null);
+  liveApi.current = {
+    getState: () => {
+      const last = lines[lines.length - 1];
+      return {
+        hostKind: props.hostKind,
+        inOffice: props.inOffice,
+        tab,
+        busy,
+        input,
+        provider: { baseUrl: provider.baseUrl, model: activeModel },
+        pending: pending ? pending.changeset.diff().map((h) => ({ id: h.id, title: h.title })) : [],
+        lastLine: last && "text" in last ? last.text : undefined
+      };
+    },
+    configure: async (next) => {
+      const config = { ...provider, ...next };
+      setProvider(config);
+      setChatModel(next.model || config.model);
+      await saveProvider(config);
+    },
+    send: (text) => send(text),
+    apply: () => applySelected(),
+    reject: () => setPending(null),
+    setTab: (next) => setTab(next)
+  };
+
+  useEffect(() => {
+    return installLiveBridge({
+      getState: () => liveApi.current!.getState(),
+      configure: (next) => liveApi.current!.configure(next),
+      send: (text) => liveApi.current!.send(text),
+      apply: () => liveApi.current!.apply(),
+      reject: () => liveApi.current!.reject(),
+      setTab: (next) => liveApi.current!.setTab(next)
+    });
+  }, []);
+
   return (
-    <div className="op-shell">
+    <div
+      className="op-shell"
+      data-testid="openplugin-app"
+      data-host={props.hostKind}
+      data-in-office={props.inOffice ? "1" : "0"}
+    >
       <Header
         hostKind={props.hostKind}
         contextLabel={contextLabel}
-        onNewChat={() => {
-          abortRef.current?.abort();
-          setPending(null);
-          setChatModel(provider.model);
-          setWebSearch(searchSettings.defaultEnabled);
-          void persist([], [], []);
-          void clearHistory(props.hostKind);
+        onNewChat={() => void startNewChat()}
+        onOpenHistory={() => setTab("history")}
+        onOpenSkills={() => {
+          setSkillEditor(null);
+          setTab("skills");
         }}
         onOpenSettings={() => setTab("settings")}
       />
-      {tab === "settings" ? (
+      {tab === "history" ? (
+        <HistoryPanel
+          conversations={visibleConversations(conversations, activeId)}
+          activeId={activeId}
+          error={historyError}
+          onClose={() => setTab("chat")}
+          onSelect={(id) => void selectConversation(id)}
+          onRename={(id, title) => void renameConversation(id, title)}
+          onDelete={(id) => void removeConversation(id)}
+        />
+      ) : tab === "settings" ? (
         <SettingsPanel
           provider={provider}
           instructions={instructions}
           companion={companion}
           policyNote={policy.catalogUrl ? `Tenant catalog: ${policy.catalogUrl}` : undefined}
-          skills={[
-            ...bundledSkills()
-              .list(props.hostKind)
-              .map((s) => ({ ...s, source: "bundled" as const })),
-            ...imported
-              .filter((s) => s.hosts.includes(props.hostKind))
-              .map((s) => ({
-                ...s,
-                source: "imported" as const
-              }))
-          ]}
-          disabledSkills={disabledSkills}
           audit={audit}
           autoApply={alwaysApply}
           search={searchSettings}
@@ -662,26 +1030,9 @@ export function App(props: { hostKind: HostKind; inOffice: boolean }) {
             setInstructions(text);
             await saveInstructions(text);
           }}
-          onImportUrl={async (url) => {
-            const skill = await importSkillFromUrl(url);
-            setImported((s) => [...s.filter((x) => x.name !== skill.name), skill]);
-          }}
-          onImportMarkdown={async (md) => {
-            const nameMatch = md.match(/^name:\s*([a-z0-9-]+)/m);
-            const folder = nameMatch?.[1] ?? "imported-skill";
-            const skill = await importSkillFromMarkdown(md, folder);
-            setImported((s) => [...s.filter((x) => x.name !== skill.name), skill]);
-          }}
-          onRemoveSkill={async (name) => {
-            await removeImportedSkill(name);
-            setImported((s) => s.filter((x) => x.name !== name));
-          }}
-          onToggleSkill={(name, enabled) => {
-            const next = enabled
-              ? disabledSkills.filter((n) => n !== name)
-              : [...disabledSkills, name];
-            setDisabledSkills(next);
-            saveDisabledSkills(next);
+          onOpenSkills={() => {
+            setSkillEditor(null);
+            setTab("skills");
           }}
           onAutoApply={setAlwaysApply}
           onSearch={async (next) => {
@@ -689,6 +1040,47 @@ export function App(props: { hostKind: HostKind; inOffice: boolean }) {
             await saveSearchSettings(next);
           }}
           onTestLogged={(ok, summary) => log(ok ? "test" : "error", summary)}
+        />
+      ) : tab === "skills" ? (
+        <SkillsPanel
+          skills={managedSkills}
+          disabledSkills={disabledSkills}
+          editor={skillEditor}
+          onClose={() => {
+            setSkillEditor(null);
+            setTab("chat");
+          }}
+          onToggle={(name, enabled) => {
+            const next = enabled ? disabledSkills.filter((n) => n !== name) : [...disabledSkills, name];
+            setDisabledSkills(next);
+            saveDisabledSkills(next);
+          }}
+          onRemove={async (name) => {
+            await removeImportedSkill(name);
+            setImported((s) => s.filter((x) => x.name !== name));
+          }}
+          onExport={(skill) => downloadSkillMarkdown(skill.name, skill.markdown)}
+          onOpenEditor={setSkillEditor}
+          onChangeEditor={(markdown) => setSkillEditor((e) => (e ? { ...e, markdown } : e))}
+          onSaveEditor={() => {
+            if (!skillEditor) return;
+            void persistSkill(skillEditor.markdown, skillEditor.previousName).catch((err) => {
+              setSkillEditor((e) =>
+                e ? { ...e, error: err instanceof Error ? err.message : String(err) } : e
+              );
+            });
+          }}
+          onCloseEditor={() => setSkillEditor(null)}
+          onImportUrl={async (url) => {
+            const skill = await importSkillFromUrl(url);
+            setImported((s) => mergeStoredRecords(s, [skill]));
+          }}
+          onImportMarkdown={async (md) => {
+            const folder = md.match(/^name:\s*([a-z0-9-]+)/m)?.[1] ?? "imported-skill";
+            const skill = await importSkillFromMarkdown(md, folder);
+            setImported((s) => mergeStoredRecords(s, [skill]));
+          }}
+          onNew={newSkill}
         />
       ) : (
         <>
@@ -700,6 +1092,7 @@ export function App(props: { hostKind: HostKind; inOffice: boolean }) {
             }} />
           ) : (
             <Thread
+              key={activeId}
               hostKind={props.hostKind}
               lines={lines}
               busy={busy}
@@ -757,6 +1150,12 @@ export function App(props: { hostKind: HostKind; inOffice: boolean }) {
             onInsertSkill={(name) => setInput(`/${name} `)}
             onToggleWebSearch={setWebSearch}
             onModelChange={setChatModel}
+            onManageSkills={() => {
+              setSkillEditor(null);
+              setTab("skills");
+            }}
+            onSkillify={() => void skillifyChat()}
+            canSkillify={lines.some((l) => l.kind === "user" || l.kind === "assistant")}
           />
         </>
       )}

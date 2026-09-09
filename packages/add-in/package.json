@@ -10,10 +10,10 @@
     "build": "vite build",
     "test": "vitest run",
     "typecheck": "tsc --noEmit",
-    "start": "office-addin-debugging start ../../manifest.xml",
-    "start:excel": "office-addin-debugging start ../../manifest.xml desktop --app excel",
-    "start:word": "office-addin-debugging start ../../manifest.xml desktop --app word",
-    "start:powerpoint": "office-addin-debugging start ../../manifest.xml desktop --app powerpoint",
+    "start": "office-addin-debugging start ../../manifest.xml --no-debug",
+    "start:excel": "office-addin-debugging start ../../manifest.xml desktop --app excel --no-debug",
+    "start:word": "office-addin-debugging start ../../manifest.xml desktop --app word --no-debug",
+    "start:powerpoint": "office-addin-debugging start ../../manifest.xml desktop --app powerpoint --no-debug",
     "stop": "office-addin-debugging stop ../../manifest.xml"
   },
   "dependencies": {

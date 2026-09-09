@@ -71,11 +71,13 @@ export class FakeWordHost implements HostAdapter {
           p.text = change.all ? p.text.split(change.search).join(change.replace) : p.text.replace(change.search, change.replace);
         }
       } else if (change.op === "applyStyle") {
-        const p = this.paragraphs[this.selection.paragraphIndex];
+        const index = change.paragraphIndex ?? this.selection.paragraphIndex;
+        const p = this.paragraphs[index];
         if (p) p.style = change.style;
       } else if (change.op === "insertTable") {
+        const cells = change.cells?.map((row) => row.join("|")).join(" / ");
         this.paragraphs.push({
-          text: `[table ${change.rows}x${change.cols}]`,
+          text: cells ? `[table ${change.rows}x${change.cols} ${cells}]` : `[table ${change.rows}x${change.cols}]`,
           style: "Normal"
         });
       } else if (change.op === "insertComment") {

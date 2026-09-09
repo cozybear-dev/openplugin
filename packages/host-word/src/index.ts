@@ -70,11 +70,18 @@ export class WordHost implements HostAdapter {
     return Word.run(async (context) => {
       const results = context.document.body.search(args.query);
       results.load("items/text");
+      const paragraphs = context.document.body.paragraphs;
+      paragraphs.load("items/text");
       await context.sync();
-      return results.items.slice(0, args.max ?? 40).map((item, paragraphIndex) => ({
-        paragraphIndex,
-        text: item.text
-      }));
+      const paras = paragraphs.items.map((p) => p.text);
+      let cursor = 0;
+      return results.items.slice(0, args.max ?? 40).map((item) => {
+        const text = item.text ?? "";
+        let paragraphIndex = paras.findIndex((p, i) => i >= cursor && p.includes(text));
+        if (paragraphIndex < 0) paragraphIndex = paras.findIndex((p) => p.includes(text));
+        if (paragraphIndex >= 0) cursor = paragraphIndex + 1;
+        return { paragraphIndex: Math.max(0, paragraphIndex), text };
+      });
     });
   }
 
@@ -128,14 +135,31 @@ export class WordHost implements HostAdapter {
           const results = body.search(change.search);
           results.load("items");
           await context.sync();
-          const items = change.all ? results.items : results.items.slice(0, 1);
-          for (const item of items) item.insertText(change.replace, Word.InsertLocation.replace);
+          const items = change.all ? [...results.items] : results.items.slice(0, 1);
+          for (const item of items.reverse()) {
+            item.insertText(change.replace, Word.InsertLocation.replace);
+          }
         } else if (change.op === "applyStyle") {
-          selection.paragraphs.load("items");
-          await context.sync();
-          for (const p of selection.paragraphs.items) p.style = change.style;
+          if (typeof change.paragraphIndex === "number") {
+            body.paragraphs.load("items");
+            await context.sync();
+            const p = body.paragraphs.items[change.paragraphIndex];
+            if (p) p.style = change.style;
+          } else {
+            selection.paragraphs.load("items");
+            await context.sync();
+            for (const p of selection.paragraphs.items) p.style = change.style;
+          }
         } else if (change.op === "insertTable") {
-          body.insertTable(change.rows, change.cols, Word.InsertLocation.end);
+          const table = body.insertTable(change.rows, change.cols, Word.InsertLocation.end);
+          if (change.cells) {
+            for (let r = 0; r < change.cells.length; r++) {
+              const row = change.cells[r] ?? [];
+              for (let c = 0; c < row.length; c++) {
+                table.getCell(r, c).body.insertText(String(row[c] ?? ""), Word.InsertLocation.start);
+              }
+            }
+          }
         } else if (change.op === "insertComment") {
           selection.insertComment(change.text);
         } else if (change.op === "replaceParagraph") {

@@ -82,7 +82,7 @@ export type WordChange =
       beforeText?: string;
     }
   | { host: "word"; op: "searchReplace"; search: string; replace: string; all: boolean }
-  | { host: "word"; op: "applyStyle"; style: string; target: "selection" | "heading" }
+  | { host: "word"; op: "applyStyle"; style: string; target: "selection" | "heading"; paragraphIndex?: number }
   | { host: "word"; op: "insertTable"; rows: number; cols: number; cells?: string[][] }
   | { host: "word"; op: "insertComment"; text: string }
   | { host: "word"; op: "replaceParagraph"; index: number; text: string; beforeText?: string }

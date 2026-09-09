@@ -531,6 +531,20 @@ kbd { font: inherit; border: 1px solid #cec5b9; padding: 0 3px; border-radius: 2
 .op-import > .fui-Input, .op-import > .fui-Combobox { flex: 1; min-width: 0; }
 .op-import > button { flex-shrink: 0; }
 .op-skill-list li, .op-audit li { padding: 10px 0; }
+.op-history-list { list-style: none; margin: 0; padding: 0; }
+.op-history-row { display: flex; align-items: flex-start; gap: 8px; padding: 10px 0; border-bottom: 1px solid var(--op-line); }
+.op-history-row.is-active { background: #eae3d64d; }
+.op-history-open { flex: 1; min-width: 0; text-align: left; border: none; background: transparent; color: inherit; cursor: pointer; }
+.op-history-open strong { display: block; font-size: 13px; }
+.op-history-meta { font-size: 10px; color: var(--op-muted); }
+.op-skill-toolbar { display: flex; gap: 8px; margin: 0 0 12px; }
+.op-skill-row-main { display: flex; align-items: flex-start; justify-content: space-between; gap: 8px; }
+.op-skill-row-main .fui-Checkbox { flex: 1; min-width: 0; }
+.op-skill-hosts { display: flex; flex-wrap: wrap; gap: 8px; }
+.op-skill-surfaces { display: flex; gap: 6px; margin: 4px 0 12px; }
+.op-skill-editor-actions { display: flex; gap: 6px; align-items: center; }
+.op-skill-editor .op-settings-head { align-items: flex-start; }
+.op-skill-markdown, .op-skill-body { min-height: 180px; font-family: var(--op-mono), ui-monospace, monospace; font-size: 12px; }
 .op-debug { list-style: none; padding: 0; }
 .op-connect { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin: 8px 16px 0; padding: 10px 0 10px 12px; border: none; border-left: 2px solid var(--op-brass); border-radius: 0; background: #ebe4d76b; color: var(--op-navy); text-align: left; cursor: pointer; flex-shrink: 0; }
 .op-connect > span:first-child { display: flex; flex-direction: column; gap: 3px; }

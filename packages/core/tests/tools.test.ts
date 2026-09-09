@@ -155,6 +155,91 @@ describe("executeHostTool", () => {
     expect(ppt.slides).toHaveLength(2);
   });
 
+  it("canonicalizes a sheet-qualified format address at queue time", async () => {
+    const host = new FakeExcelHost();
+    const cs = new Changeset();
+    await executeHostTool(
+      host,
+      "excel.formatRange",
+      { sheet: "Sheet1", address: "Sheet1!B2:B10", numberFormat: "0.00" },
+      cs
+    );
+    expect(cs.changes[0]).toMatchObject({ op: "formatRange", sheet: "Sheet1", address: "B2:B10" });
+  });
+
+  it("tells the model that duplicate uses newName for the copy", () => {
+    const def = listToolDefinitions("excel").find(
+      (t): t is Extract<typeof t, { type: "function" }> =>
+        t.type === "function" && t.function.name === "excel.modifyWorkbook"
+    );
+    expect(def?.function.description).toMatch(/duplicate/i);
+    expect(def?.function.description).toMatch(/newName/);
+    expect(def?.function.description.toLowerCase()).toMatch(/copy/);
+  });
+
+  it("queues and applies a sheet duplicate with a custom name", async () => {
+    const host = new FakeExcelHost();
+    host.sheets.Sheet1.values = [["a"]];
+    const cs = new Changeset();
+    await executeHostTool(
+      host,
+      "excel.modifyWorkbook",
+      { operation: "duplicate", sheet: "Sheet1", newName: "Budget" },
+      cs
+    );
+    expect(cs.changes[0]).toMatchObject({
+      op: "modifyWorkbook",
+      operation: "duplicate",
+      sheet: "Sheet1",
+      newName: "Budget"
+    });
+    await host.apply(cs);
+    expect(host.sheets.Budget?.values).toEqual([["a"]]);
+    expect(host.sheets.Sheet1.values).toEqual([["a"]]);
+  });
+
+  it("duplicates a sheet with a default copy name when newName is omitted", async () => {
+    const host = new FakeExcelHost();
+    host.sheets.Sheet1.values = [["a"]];
+    const cs = new Changeset();
+    await executeHostTool(host, "excel.modifyWorkbook", { operation: "duplicate", sheet: "Sheet1" }, cs);
+    await host.apply(cs);
+    expect(host.sheets["Sheet1 Copy"]?.values).toEqual([["a"]]);
+  });
+
+  it("queues applyStyle with paragraphIndex", async () => {
+    const host = new FakeWordHost();
+    host.paragraphs = [
+      { text: "fixture", style: "Normal" },
+      { text: "Weekly Update", style: "Normal" }
+    ];
+    const cs = new Changeset();
+    await executeHostTool(host, "word.applyStyle", { style: "Heading 1", paragraphIndex: 1 }, cs);
+    expect(cs.changes[0]).toMatchObject({ op: "applyStyle", style: "Heading 1", paragraphIndex: 1 });
+    await host.apply(cs);
+    expect(host.paragraphs[1].style).toBe("Heading 1");
+    expect(host.paragraphs[0].style).toBe("Normal");
+  });
+
+  it("queues insertTable cells and applies them on the fake host", async () => {
+    const host = new FakeWordHost();
+    const cs = new Changeset();
+    await executeHostTool(
+      host,
+      "word.insertTable",
+      { rows: 2, cols: 2, cells: [["A", "B"], ["1", "2"]] },
+      cs
+    );
+    expect(cs.changes[0]).toMatchObject({
+      op: "insertTable",
+      rows: 2,
+      cols: 2,
+      cells: [["A", "B"], ["1", "2"]]
+    });
+    await host.apply(cs);
+    expect(host.paragraphs.map((p) => p.text).join("\n")).toContain("[table 2x2 A|B / 1|2]");
+  });
+
   it("rejects unknown tools instead of returning an empty read result", async () => {
     const host = new FakeExcelHost();
     const cs = new Changeset();

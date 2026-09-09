@@ -148,7 +148,10 @@ export async function chatCompletions(opts: {
   try {
     if (opts.stream === false) {
       const json = (await response.json()) as {
-        choices?: Array<{ message?: { content?: string; tool_calls?: ToolCall[] } }>;
+        choices?: Array<{
+          message?: { content?: string; tool_calls?: ToolCall[] };
+          finish_reason?: string | null;
+        }>;
       };
       const msg = json.choices?.[0]?.message;
       const message: Extract<ChatMessage, { role: "assistant" }> = {
@@ -156,8 +159,9 @@ export async function chatCompletions(opts: {
         content: msg?.content ?? "",
         ...(msg?.tool_calls ? { tool_calls: msg.tool_calls } : {})
       };
+      const finishReason = finishReasonFrom(json.choices?.[0]?.finish_reason);
       opts.onEvent?.({ type: "done", message });
-      return { message };
+      return { message, finishReason };
     }
     return await readSse(response, opts.onEvent);
   } catch (err) {
@@ -170,6 +174,14 @@ export async function chatCompletions(opts: {
   }
 }
 
+export function isTruncatedFinish(reason?: string): boolean {
+  return reason === "length" || reason === "max_tokens";
+}
+
+function finishReasonFrom(value: string | null | undefined): string | undefined {
+  return typeof value === "string" && value ? value : undefined;
+}
+
 async function readSse(
   response: Response,
   onEvent?: (event: StreamEvent) => void
@@ -177,6 +189,7 @@ async function readSse(
   const text = await response.text();
   const tools = new Map<number, PendingTool>();
   let content = "";
+  let finishReason: string | undefined;
 
   for (const block of text.split(/\n\n/)) {
     for (const rawLine of block.split("\n")) {
@@ -187,6 +200,7 @@ async function readSse(
       let parsed: {
         error?: { message?: string };
         choices?: Array<{
+          finish_reason?: string | null;
           delta?: {
             content?: string | null;
             tool_calls?: Array<{
@@ -207,6 +221,8 @@ async function readSse(
       if (parsed.error?.message) {
         throw new LlmError(parsed.error.message, "http");
       }
+      const fromChoice = finishReasonFrom(parsed.choices?.[0]?.finish_reason);
+      if (fromChoice) finishReason = fromChoice;
       const delta = parsed.choices?.[0]?.delta;
       const whole = parsed.choices?.[0]?.message;
       if (typeof delta?.content === "string" && delta.content.length > 0) {
@@ -259,7 +275,7 @@ async function readSse(
     ...(tool_calls.length ? { tool_calls } : {})
   };
   onEvent?.({ type: "done", message });
-  return { message };
+  return { message, finishReason };
 }
 
 export async function listModels(opts: {

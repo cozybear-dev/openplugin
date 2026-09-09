@@ -1,7 +1,8 @@
-import { parse as parseYaml } from "yaml";
+import { parse as parseYaml, stringify as stringifyYaml } from "yaml";
 import type { HostKind } from "../llm/types.js";
 
-const HOSTS: HostKind[] = ["excel", "word", "powerpoint"];
+export const SKILL_HOSTS: HostKind[] = ["excel", "word", "powerpoint"];
+const HOSTS = SKILL_HOSTS;
 
 export type SkillMeta = {
   name: string;
@@ -88,4 +89,28 @@ function parseHosts(raw?: string): HostKind[] {
   const parts = raw.split(/[,\s]+/).filter(Boolean) as HostKind[];
   const hosts = parts.filter((h): h is HostKind => HOSTS.includes(h));
   return hosts.length ? hosts : [...HOSTS];
+}
+
+export function serializeSkill(skill: Skill): string {
+  const front: Record<string, unknown> = {
+    name: skill.name,
+    description: skill.description
+  };
+  if (skill.license) front.license = skill.license;
+  if (skill.compatibility) front.compatibility = skill.compatibility;
+  if (!skill.userInvocable) front["user-invocable"] = false;
+  if (skill.disableModelInvocation) front["disable-model-invocation"] = true;
+
+  const metadata: Record<string, string> = {};
+  for (const [key, value] of Object.entries(skill.metadata)) {
+    if (key === "openplugin/hosts" || key === "openplugin/tools" || key === "openplugin/inject") continue;
+    metadata[key] = value;
+  }
+  const allHosts = HOSTS.length === skill.hosts.length && HOSTS.every((h) => skill.hosts.includes(h));
+  if (!allHosts) metadata["openplugin/hosts"] = skill.hosts.join(",");
+  if (skill.tools?.length) metadata["openplugin/tools"] = skill.tools.join(" ");
+  if (skill.inject === "always") metadata["openplugin/inject"] = "always";
+  if (Object.keys(metadata).length) front.metadata = metadata;
+
+  return `---\n${stringifyYaml(front).trimEnd()}\n---\n\n${skill.body}\n`;
 }

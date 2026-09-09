@@ -10,11 +10,14 @@
     "packages/host-excel",
     "packages/host-word",
     "packages/host-powerpoint",
-    "packages/companion"
+    "packages/companion",
+    "packages/live"
   ],
   "scripts": {
     "test": "npm test --workspaces --if-present",
     "test:core": "npm test -w @openplugin/core",
+    "test:live": "npm run test:live -w @openplugin/live",
+    "live": "npm run live -w @openplugin/live --",
     "build": "npm run build --workspaces --if-present",
     "dev": "npm run dev -w @openplugin/add-in",
     "start": "npm run start -w @openplugin/add-in",

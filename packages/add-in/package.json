@@ -1,0 +1,38 @@
+{
+  "name": "@openplugin/add-in",
+  "version": "0.1.0",
+  "license": "Apache-2.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "vite --port 3000",
+    "dev-server": "vite --port 3000",
+    "build": "vite build",
+    "typecheck": "tsc --noEmit",
+    "start": "office-addin-debugging start ../../manifest.xml",
+    "start:excel": "office-addin-debugging start ../../manifest.xml desktop --app excel",
+    "start:word": "office-addin-debugging start ../../manifest.xml desktop --app word",
+    "start:powerpoint": "office-addin-debugging start ../../manifest.xml desktop --app powerpoint",
+    "stop": "office-addin-debugging stop ../../manifest.xml"
+  },
+  "dependencies": {
+    "@fluentui/react-components": "^9.72.3",
+    "@fluentui/react-icons": "^2.0.311",
+    "@openplugin/core": "0.1.0",
+    "@openplugin/host-excel": "0.1.0",
+    "@openplugin/host-powerpoint": "0.1.0",
+    "@openplugin/host-word": "0.1.0",
+    "react": "^19.1.1",
+    "react-dom": "^19.1.1"
+  },
+  "devDependencies": {
+    "@types/office-js": "^1.0.532",
+    "@types/react": "^19.1.12",
+    "@types/react-dom": "^19.1.9",
+    "@vitejs/plugin-react": "^5.0.2",
+    "office-addin-debugging": "^6.0.3",
+    "office-addin-dev-certs": "^2.0.3",
+    "typescript": "^5.9.2",
+    "vite": "^7.1.5"
+  }
+}

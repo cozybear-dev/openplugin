@@ -1,0 +1,70 @@
+import { deflateSync } from "node:zlib";
+import { mkdirSync, writeFileSync } from "node:fs";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
+
+function crc32(buf) {
+  let c = ~0 >>> 0;
+  for (let i = 0; i < buf.length; i++) {
+    c ^= buf[i];
+    for (let k = 0; k < 8; k++) c = c & 1 ? (c >>> 1) ^ 0xedb88320 : c >>> 1;
+  }
+  return (~c) >>> 0;
+}
+
+function chunk(type, data) {
+  const len = Buffer.alloc(4);
+  len.writeUInt32BE(data.length);
+  const typeBuf = Buffer.from(type);
+  const crc = Buffer.alloc(4);
+  crc.writeUInt32BE(crc32(Buffer.concat([typeBuf, data])));
+  return Buffer.concat([len, typeBuf, data, crc]);
+}
+
+function png(size) {
+  const raw = [];
+  for (let y = 0; y < size; y++) {
+    raw.push(0);
+    for (let x = 0; x < size; x++) {
+      const edge = x < size * 0.08 || y < size * 0.08 || x > size * 0.92 || y > size * 0.92;
+      const doc = x > size * 0.28 && x < size * 0.72 && y > size * 0.22 && y < size * 0.78;
+      const spark = Math.hypot(x - size * 0.72, y - size * 0.28) < size * 0.12;
+      let r = 15, g = 23, b = 42;
+      if (!edge) {
+        r = 20;
+        g = 48;
+        b = 92;
+      }
+      if (doc) {
+        r = 241;
+        g = 245;
+        b = 249;
+      }
+      if (spark) {
+        r = 56;
+        g = 189;
+        b = 248;
+      }
+      raw.push(r, g, b, 255);
+    }
+  }
+  const ihdr = Buffer.alloc(13);
+  ihdr.writeUInt32BE(size, 0);
+  ihdr.writeUInt32BE(size, 4);
+  ihdr[8] = 8;
+  ihdr[9] = 6;
+  const idat = deflateSync(Buffer.from(raw));
+  return Buffer.concat([
+    Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]),
+    chunk("IHDR", ihdr),
+    chunk("IDAT", idat),
+    chunk("IEND", Buffer.alloc(0))
+  ]);
+}
+
+const dir = join(dirname(fileURLToPath(import.meta.url)), "../public/assets");
+mkdirSync(dir, { recursive: true });
+for (const size of [16, 32, 64, 80]) {
+  writeFileSync(join(dir, `icon-${size}.png`), png(size));
+}
+console.log("wrote icons to", dir);

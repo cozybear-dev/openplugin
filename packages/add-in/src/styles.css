@@ -1,0 +1,94 @@
+html,
+body,
+#root {
+  margin: 0;
+  height: 100%;
+  font-family: "Segoe UI", system-ui, sans-serif;
+}
+
+.shell {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  height: 100%;
+  padding: 12px;
+  box-sizing: border-box;
+}
+
+.top {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+}
+
+.host-badge {
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  opacity: 0.7;
+}
+
+.thread {
+  flex: 1;
+  overflow: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 8px 0;
+}
+
+.line {
+  padding: 8px 10px;
+  border-radius: 8px;
+  white-space: pre-wrap;
+  font-size: 13px;
+}
+
+.line.user {
+  background: #e8f1fb;
+  align-self: flex-end;
+}
+
+.line.assistant {
+  background: #f4f4f4;
+}
+
+.line.tool {
+  background: #f0f7ea;
+  font-family: ui-monospace, Consolas, monospace;
+  font-size: 12px;
+}
+
+.line.error {
+  background: #fde7e9;
+}
+
+.composer {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.changeset {
+  border: 1px solid #d0d0d0;
+  border-radius: 8px;
+  padding: 8px;
+  background: #fffbe6;
+}
+
+.changeset pre {
+  white-space: pre-wrap;
+  font-size: 12px;
+  margin: 0 0 8px;
+}
+
+.row {
+  display: flex;
+  gap: 8px;
+}
+
+.settings {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  overflow: auto;
+}

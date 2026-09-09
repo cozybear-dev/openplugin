@@ -4,6 +4,8 @@ Open-source LLM agent for **Excel**, **Word**, and **PowerPoint**. One Office.js
 
 The add-in does **not** proxy your documents through a vendor cloud. Your API key stays in this Office profile. The model sees a token-budgeted snapshot plus the tools you approve.
 
+![OpenPlugin task pane in Excel](pictures/excel-task-pane.png)
+
 ## Why it exists
 
 Chat sidebars are a crowded market. OpenPlugin is a **document runtime for agents**:
@@ -36,6 +38,8 @@ On first run, Office will trust a local HTTPS certificate from `office-addin-dev
 2. Gear → pick **OpenRouter**, **Ollama (local)**, or **Custom OpenAI-compatible**
 3. **Test connection**
 4. Use a prompt chip or type. Review the change list. **Apply**
+
+![OpenPlugin settings — provider, model, and API key](pictures/settings.png)
 
 Excel custom functions (after sideload): `=OP.PROMPT("hello")`, `=OP.MAP(A2:A10, "uppercase")`, `=OP.EXTRACT(A1:D20, "name, amount")`.
 
@@ -83,6 +87,7 @@ packages/host-word     Office.js Word adapter
 packages/host-powerpoint
 packages/enterprise    Policy format, AppSource notes (commercial)
 skills/                Bundled Agent Skills
+pictures/              Task pane and settings screenshots
 ```
 
 ## License and enterprise

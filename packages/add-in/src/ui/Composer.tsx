@@ -13,7 +13,7 @@ import {
 } from "@fluentui/react-components";
 import { Add24Regular, Globe24Regular, Send24Regular, Square24Filled } from "@fluentui/react-icons";
 import { slashSuggestions, type ModelInfo, type SkillCatalogEntry } from "@openplugin/core";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 
 export function Composer(props: {
   value: string;
@@ -34,6 +34,7 @@ export function Composer(props: {
   const suggestions = slashSuggestions(props.value, names);
   const showSlash = props.value.startsWith("/") && !props.value.includes("\n");
   const [modelText, setModelText] = useState(props.model);
+  const ignoreNextCommit = useRef(false);
   useEffect(() => {
     setModelText(props.model);
   }, [props.model]);
@@ -43,6 +44,10 @@ export function Composer(props: {
   );
 
   function commitTypedModel() {
+    if (ignoreNextCommit.current) {
+      ignoreNextCommit.current = false;
+      return;
+    }
     const typed = modelText.trim();
     const id = typed ? modelIdFromInput(props.models, typed) : "";
     setModelText(id);
@@ -130,14 +135,15 @@ export function Composer(props: {
               disabled={props.disabled}
               onOptionSelect={(_, data) => {
                 if (data.optionValue == null) return;
+                ignoreNextCommit.current = true;
                 setModelText(data.optionValue);
                 if (data.optionValue !== props.model) props.onModelChange(data.optionValue);
+                queueMicrotask(() => {
+                  ignoreNextCommit.current = false;
+                });
               }}
               onChange={(e) => setModelText(e.target.value)}
               onBlur={commitTypedModel}
-              onKeyDown={(e) => {
-                if (e.key === "Enter") commitTypedModel();
-              }}
             >
               {filteredModels.map((m) => (
                 <Option key={m.id} value={m.id} text={m.name ?? m.id}>

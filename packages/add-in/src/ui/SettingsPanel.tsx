@@ -13,7 +13,7 @@ import {
   Textarea
 } from "@fluentui/react-components";
 import { CheckmarkFilled, DismissCircleFilled } from "@fluentui/react-icons";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import {
   chatCompletions,
   LlmError,
@@ -56,6 +56,7 @@ export function SettingsPanel(props: {
   const [paste, setPaste] = useState("");
   const [importMsg, setImportMsg] = useState<string | null>(null);
   const [modelText, setModelText] = useState(props.provider.model);
+  const ignoreNextCommit = useRef(false);
 
   useEffect(() => {
     setTestStatus("idle");
@@ -72,6 +73,10 @@ export function SettingsPanel(props: {
   );
 
   function commitTypedModel() {
+    if (ignoreNextCommit.current) {
+      ignoreNextCommit.current = false;
+      return;
+    }
     const typed = modelText.trim();
     const id = typed ? modelIdFromInput(props.models, typed) : "";
     setModelText(id);
@@ -152,14 +157,15 @@ export function SettingsPanel(props: {
             selectedOptions={props.provider.model ? [props.provider.model] : []}
             onOptionSelect={(_, data) => {
               if (data.optionValue == null) return;
+              ignoreNextCommit.current = true;
               setModelText(data.optionValue);
               if (data.optionValue !== props.provider.model) patch({ model: data.optionValue });
+              queueMicrotask(() => {
+                ignoreNextCommit.current = false;
+              });
             }}
             onChange={(e) => setModelText(e.target.value)}
             onBlur={commitTypedModel}
-            onKeyDown={(e) => {
-              if (e.key === "Enter") commitTypedModel();
-            }}
           >
             {filteredModels.map((m) => (
               <Option key={m.id} value={m.id} text={m.name ?? m.id}>

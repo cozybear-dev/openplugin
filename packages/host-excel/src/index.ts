@@ -1,4 +1,5 @@
 import {
+  addressToBounds,
   Changeset,
   excelMatrixAssign,
   type HostAdapter,
@@ -98,6 +99,17 @@ export class ExcelHost implements HostAdapter {
           const sheet = context.workbook.worksheets.getItem(change.sheet);
           const type = mapChart(change.chartType);
           sheet.charts.add(type, sheet.getRange(change.source));
+        } else if (change.op === "formatRange") {
+          const range = context.workbook.worksheets.getItem(change.sheet).getRange(change.address);
+          if (change.bold) range.format.font.bold = true;
+          if (change.numberFormat) {
+            const { r1, c1, r2, c2 } = addressToBounds(change.address);
+            const rows = r2 - r1 + 1;
+            const cols = c2 - c1 + 1;
+            range.numberFormat = Array.from({ length: rows }, () =>
+              Array.from({ length: cols }, () => change.numberFormat as string)
+            );
+          }
         }
       }
       await context.sync();

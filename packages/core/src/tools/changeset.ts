@@ -19,7 +19,15 @@ export type ExcelChange =
       before?: unknown[][];
     }
   | { host: "excel"; op: "createTable"; sheet: string; address: string; name?: string }
-  | { host: "excel"; op: "createChart"; sheet: string; source: string; chartType: string };
+  | { host: "excel"; op: "createChart"; sheet: string; source: string; chartType: string }
+  | {
+      host: "excel";
+      op: "formatRange";
+      sheet: string;
+      address: string;
+      bold?: boolean;
+      numberFormat?: string;
+    };
 
 export type WordChange =
   | { host: "word"; op: "replaceSelection"; text: string; beforeText?: string }
@@ -116,6 +124,8 @@ function item(change: Change): { title: string; detail: string } {
       return { title: `Create table ${change.sheet}!${change.address}`, detail: change.name ?? "" };
     case "createChart":
       return { title: `Chart (${change.chartType})`, detail: change.source };
+    case "formatRange":
+      return { title: `Format ${change.sheet}!${change.address}`, detail: change.numberFormat ?? "" };
     case "replaceSelection":
       return { title: "Replace selection", detail: clip(change.text) };
     case "insertParagraphs":

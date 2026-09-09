@@ -1,9 +1,10 @@
-export { chatCompletions, chatUrl, classifyHttpError, LlmError } from "./llm/client.js";
+export { chatCompletions, chatUrl, classifyHttpError, listModels, LlmError, modelsUrl } from "./llm/client.js";
 export type {
   ChatMessage,
   ChatResult,
   HostKind,
   LlmErrorCode,
+  ModelInfo,
   ProviderConfig,
   StreamEvent,
   ToolCall,

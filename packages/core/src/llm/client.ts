@@ -3,6 +3,7 @@ import {
   type ChatMessage,
   type ChatResult,
   type LlmErrorCode,
+  type ModelInfo,
   type ProviderConfig,
   type StreamEvent,
   type ToolCall,
@@ -10,11 +11,36 @@ import {
 } from "./types.js";
 
 export { LlmError } from "./types.js";
+export type { ModelInfo } from "./types.js";
 
 export function chatUrl(baseUrl: string): string {
   const trimmed = baseUrl.trim();
   if (/\/chat\/completions(\?|$)/i.test(trimmed)) return trimmed;
   return `${trimmed.replace(/\/+$/, "")}/chat/completions`;
+}
+
+export function modelsUrl(baseUrl: string): string {
+  const trimmed = baseUrl.trim();
+  if (/\/models(\?|$)/i.test(trimmed)) return trimmed;
+  if (/\/chat\/completions(\?|$)/i.test(trimmed)) {
+    return trimmed.replace(/\/chat\/completions(?=\?|$)/i, "/models");
+  }
+  return `${trimmed.replace(/\/+$/, "")}/models`;
+}
+
+function authHeaders(config: ProviderConfig): Headers {
+  const headers = new Headers({
+    "Content-Type": "application/json",
+    ...(config.headers ?? {})
+  });
+  if (config.apiKey && !headers.has("api-key") && !headers.has("Authorization")) {
+    headers.set("Authorization", `Bearer ${config.apiKey}`);
+  }
+  if (/openrouter\.ai/i.test(config.baseUrl)) {
+    if (!headers.has("HTTP-Referer")) headers.set("HTTP-Referer", "https://openplugin.local");
+    if (!headers.has("X-Title")) headers.set("X-Title", "OpenPlugin");
+  }
+  return headers;
 }
 
 export function classifyHttpError(status: number, body: string): LlmError {
@@ -70,17 +96,7 @@ export async function chatCompletions(opts: {
   const fetchImpl = opts.fetchImpl ?? globalThis.fetch;
   if (!fetchImpl) throw new LlmError("fetch is not available", "network");
 
-  const headers = new Headers({
-    "Content-Type": "application/json",
-    ...(opts.config.headers ?? {})
-  });
-  if (opts.config.apiKey && !headers.has("api-key") && !headers.has("Authorization")) {
-    headers.set("Authorization", `Bearer ${opts.config.apiKey}`);
-  }
-  if (/openrouter\.ai/i.test(opts.config.baseUrl)) {
-    if (!headers.has("HTTP-Referer")) headers.set("HTTP-Referer", "https://openplugin.local");
-    if (!headers.has("X-Title")) headers.set("X-Title", "OpenPlugin");
-  }
+  const headers = authHeaders(opts.config);
 
   const body: Record<string, unknown> = {
     model: opts.config.model,
@@ -244,6 +260,82 @@ async function readSse(
   };
   onEvent?.({ type: "done", message });
   return { message };
+}
+
+export async function listModels(opts: {
+  config: ProviderConfig;
+  fetchImpl?: typeof fetch;
+  signal?: AbortSignal;
+}): Promise<ModelInfo[]> {
+  const fetchImpl = opts.fetchImpl ?? globalThis.fetch;
+  if (!fetchImpl) throw new LlmError("fetch is not available", "network");
+
+  const headers = authHeaders(opts.config);
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), opts.config.timeoutMs ?? 120_000);
+  const onOuterAbort = () => controller.abort();
+  opts.signal?.addEventListener("abort", onOuterAbort);
+
+  let response: Response;
+  try {
+    response = await fetchImpl(modelsUrl(opts.config.baseUrl), {
+      method: "GET",
+      headers,
+      signal: controller.signal
+    });
+  } catch (err) {
+    clearTimeout(timeout);
+    opts.signal?.removeEventListener("abort", onOuterAbort);
+    if (isAbort(err)) throw new LlmError("Request aborted.", "abort");
+    if (isCorsLike(err)) {
+      throw new LlmError(
+        "The endpoint blocked the request (CORS or network). Enable CORS on the server, or use the OpenPlugin companion.",
+        "cors"
+      );
+    }
+    throw new LlmError(err instanceof Error ? err.message : "Network error", "network");
+  }
+
+  try {
+    if (!response.ok) {
+      const text = await response.text().catch(() => "");
+      throw classifyHttpError(response.status, text);
+    }
+
+    const json = (await response.json()) as {
+      data?: Array<{ id?: string; name?: string }>;
+      models?: Array<{ name?: string; id?: string }>;
+    };
+
+    const raw: ModelInfo[] = [];
+    if (Array.isArray(json.data)) {
+      for (const item of json.data) {
+        if (typeof item?.id === "string" && item.id) {
+          raw.push({ id: item.id, ...(item.name ? { name: item.name } : {}) });
+        }
+      }
+    } else if (Array.isArray(json.models)) {
+      for (const item of json.models) {
+        const id = item?.id ?? item?.name;
+        if (typeof id === "string" && id) {
+          raw.push({ id, name: item.name ?? id });
+        }
+      }
+    }
+
+    const byId = new Map<string, ModelInfo>();
+    for (const model of raw) {
+      if (!byId.has(model.id)) byId.set(model.id, model);
+    }
+    return [...byId.values()].sort((a, b) => a.id.localeCompare(b.id));
+  } catch (err) {
+    if (err instanceof LlmError) throw err;
+    if (isAbort(err)) throw new LlmError("Request aborted.", "abort");
+    throw new LlmError(err instanceof Error ? err.message : "Failed to parse models response.", "parse");
+  } finally {
+    clearTimeout(timeout);
+    opts.signal?.removeEventListener("abort", onOuterAbort);
+  }
 }
 
 export function asErrorCode(err: unknown): LlmErrorCode | undefined {

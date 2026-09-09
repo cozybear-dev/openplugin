@@ -9,6 +9,8 @@ export type ProviderConfig = {
   maxOutputTokens?: number;
 };
 
+export type ModelInfo = { id: string; name?: string };
+
 export type ToolDefinition = {
   type: "function";
   function: {

@@ -1,4 +1,4 @@
-import { addressToBounds } from "../hosts/types.js";
+import { addressToBounds, colLetter } from "../hosts/types.js";
 import type { HostKind } from "../llm/types.js";
 import type { Change } from "./changeset.js";
 
@@ -39,16 +39,6 @@ export type DiffHunk =
 
 const CELL_CAP = 80;
 
-export function colLetter(index: number): string {
-  let n = index + 1;
-  let s = "";
-  while (n > 0) {
-    const rem = (n - 1) % 26;
-    s = String.fromCharCode(65 + rem) + s;
-    n = Math.floor((n - 1) / 26);
-  }
-  return s;
-}
 
 export function cellDiff(
   sheet: string,

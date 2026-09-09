@@ -44,7 +44,14 @@ export { runAgent, SYSTEM_PROMPT } from "./agent/loop.js";
 export type { AgentEvent, AgentResult } from "./agent/loop.js";
 
 export type { HostAdapter, RawFacts } from "./hosts/types.js";
-export { sliceGrid, truncateGrid, writeIntoGrid } from "./hosts/types.js";
+export {
+  addressForGrid,
+  colLetter,
+  normalizeGrid,
+  sliceGrid,
+  truncateGrid,
+  writeIntoGrid
+} from "./hosts/types.js";
 export { FakeExcelHost } from "./hosts/fake-excel.js";
 export { FakeWordHost } from "./hosts/fake-word.js";
 export { FakePowerPointHost } from "./hosts/fake-powerpoint.js";

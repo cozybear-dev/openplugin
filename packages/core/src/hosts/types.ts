@@ -98,6 +98,41 @@ function cell(ref: string): { r: number; c: number } {
   return { r: Number(m[2]) - 1, c: c - 1 };
 }
 
+export function colLetter(index: number): string {
+  let n = index + 1;
+  let s = "";
+  while (n > 0) {
+    const rem = (n - 1) % 26;
+    s = String.fromCharCode(65 + rem) + s;
+    n = Math.floor((n - 1) / 26);
+  }
+  return s;
+}
+
+export function normalizeGrid(raw: unknown): unknown[][] {
+  if (raw == null || raw === "") return [];
+  if (!Array.isArray(raw)) return [[raw]];
+  if (raw.length === 0) return [];
+  if (!raw.some((cell) => Array.isArray(cell))) return [raw];
+  const rows = raw.map((row) => (Array.isArray(row) ? [...row] : [row]));
+  const cols = rows.reduce((m, row) => Math.max(m, row.length), 0);
+  return rows.map((row) => {
+    while (row.length < cols) row.push("");
+    return row;
+  });
+}
+
+export function addressForGrid(originAddress: string, values: unknown[][]): string {
+  const { r1, c1 } = addressToBounds(originAddress);
+  const rows = values.length;
+  const cols = values[0]?.length ?? 0;
+  const origin = `${colLetter(c1)}${r1 + 1}`;
+  if (rows === 0 || cols === 0) return origin;
+  if (rows === 1 && cols === 1) return origin;
+  const end = `${colLetter(c1 + cols - 1)}${r1 + rows}`;
+  return `${origin}:${end}`;
+}
+
 export function writeIntoGrid(grid: unknown[][], address: string, values: unknown[][]): void {
   const { r1, c1 } = addressToBounds(address);
   for (let r = 0; r < values.length; r++) {

@@ -3,6 +3,7 @@ import {
   Button,
   Caption1,
   Checkbox,
+  Combobox,
   Dropdown,
   Field,
   Input,
@@ -12,8 +13,14 @@ import {
   Textarea
 } from "@fluentui/react-components";
 import { CheckmarkFilled, DismissCircleFilled } from "@fluentui/react-icons";
-import { useEffect, useState } from "react";
-import { chatCompletions, LlmError, type ProviderConfig, type SkillCatalogEntry } from "@openplugin/core";
+import { useEffect, useMemo, useState } from "react";
+import {
+  chatCompletions,
+  LlmError,
+  type ModelInfo,
+  type ProviderConfig,
+  type SkillCatalogEntry
+} from "@openplugin/core";
 import type { AuditEntry } from "../audit";
 import type { CompanionStatus } from "../companion";
 import { matchPreset, PRESETS } from "../presets";
@@ -27,8 +34,12 @@ export function SettingsPanel(props: {
   disabledSkills: string[];
   audit: AuditEntry[];
   autoApply: boolean;
+  models: ModelInfo[];
+  modelsError: string | null;
+  modelsLoading: boolean;
   onClose: () => void;
   onChange: (next: ProviderConfig) => Promise<void>;
+  onRefreshModels: () => void;
   onInstructions: (text: string) => Promise<void>;
   onImportUrl: (url: string) => Promise<void>;
   onImportMarkdown: (md: string) => Promise<void>;
@@ -44,11 +55,21 @@ export function SettingsPanel(props: {
   const [importUrl, setImportUrl] = useState("");
   const [paste, setPaste] = useState("");
   const [importMsg, setImportMsg] = useState<string | null>(null);
+  const [modelText, setModelText] = useState(props.provider.model);
 
   useEffect(() => {
     setTestStatus("idle");
     setTestError(null);
   }, [props.provider.baseUrl, props.provider.apiKey, props.provider.model]);
+
+  useEffect(() => {
+    setModelText(props.provider.model);
+  }, [props.provider.model]);
+
+  const filteredModels = useMemo(
+    () => filterModels(props.models, modelText, props.provider.model),
+    [props.models, modelText, props.provider.model]
+  );
 
   function patch(partial: Partial<ProviderConfig>) {
     void props.onChange({ ...props.provider, ...partial });
@@ -114,9 +135,46 @@ export function SettingsPanel(props: {
           onChange={(_, d) => patch({ baseUrl: d.value })}
         />
       </Field>
-      <Field label="Model">
-        <Input value={props.provider.model} onChange={(_, d) => patch({ model: d.value })} />
+      <Field label="Default model">
+        <div className="op-import">
+          <Combobox
+            aria-label="Default model"
+            freeform
+            placeholder="Model"
+            value={modelText}
+            selectedOptions={props.provider.model ? [props.provider.model] : []}
+            disabled={!props.models.length && !props.provider.model}
+            onOptionSelect={(_, data) => {
+              if (data.optionValue == null) return;
+              setModelText(data.optionValue);
+              patch({ model: data.optionValue });
+            }}
+            onChange={(e) => {
+              const typed = e.target.value;
+              setModelText(typed);
+              patch({ model: modelIdFromInput(props.models, typed) });
+            }}
+          >
+            {filteredModels.map((m) => (
+              <Option key={m.id} value={m.id} text={m.name ?? m.id}>
+                {m.name ?? m.id}
+              </Option>
+            ))}
+          </Combobox>
+          <Button
+            size="small"
+            disabled={props.modelsLoading || !props.provider.baseUrl}
+            onClick={() => props.onRefreshModels()}
+          >
+            Refresh
+          </Button>
+        </div>
       </Field>
+      {props.modelsError && (
+        <MessageBar intent="error">
+          <MessageBarBody>{props.modelsError}</MessageBarBody>
+        </MessageBar>
+      )}
       {preset.needsKey && (
         <Field label="API key">
           <Input
@@ -252,6 +310,21 @@ export function SettingsPanel(props: {
         through us.
       </Caption1>
     </div>
+  );
+}
+
+function modelIdFromInput(models: ModelInfo[], raw: string): string {
+  const exact = models.find((m) => m.id === raw);
+  if (exact) return exact.id;
+  const byName = models.filter((m) => (m.name ?? m.id) === raw);
+  return byName.length === 1 ? byName[0]!.id : raw;
+}
+
+function filterModels(models: ModelInfo[], query: string, selected: string): ModelInfo[] {
+  const q = query.trim().toLowerCase();
+  if (!q || q === selected.trim().toLowerCase()) return models;
+  return models.filter(
+    (m) => m.id.toLowerCase().includes(q) || (m.name?.toLowerCase().includes(q) ?? false)
   );
 }
 

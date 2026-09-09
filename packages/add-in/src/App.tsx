@@ -3,6 +3,7 @@ import {
   Changeset,
   compileSnapshot,
   describeTool,
+  listModels,
   LlmError,
   mergePolicy,
   OPEN_POLICY,
@@ -12,6 +13,7 @@ import {
   type ChatMessage,
   type DocumentSnapshot,
   type HostKind,
+  type ModelInfo,
   type Policy,
   type ProviderConfig,
   type Skill
@@ -51,8 +53,14 @@ export function App(props: { hostKind: HostKind; inOffice: boolean }) {
   }, [imported]);
 
   const [provider, setProvider] = useState<ProviderConfig>(loadProvider);
+  const [chatModel, setChatModel] = useState(() => loadProvider().model);
+  const [models, setModels] = useState<ModelInfo[]>([]);
+  const [modelsError, setModelsError] = useState<string | null>(null);
+  const [modelsLoading, setModelsLoading] = useState(false);
+  const [modelsTick, setModelsTick] = useState(0);
   const [instructions, setInstructions] = useState(loadInstructions);
   const [companion, setCompanion] = useState<CompanionStatus>({ state: "unknown" });
+  const [webSearch, setWebSearch] = useState(false);
   const [policy, setPolicy] = useState<Policy>(OPEN_POLICY);
   const [tab, setTab] = useState<"chat" | "settings">("chat");
   const [input, setInput] = useState("");
@@ -73,6 +81,11 @@ export function App(props: { hostKind: HostKind; inOffice: boolean }) {
   const enabledSkills = useMemo(
     () => skills.list(props.hostKind).filter((s) => !disabledSkills.includes(s.name)),
     [skills, props.hostKind, disabledSkills]
+  );
+  const activeModel = chatModel || provider.model;
+  const modelOptions = useMemo(
+    () => unionModels(models, provider.model, chatModel),
+    [models, provider.model, chatModel]
   );
 
   useEffect(() => {
@@ -126,7 +139,7 @@ export function App(props: { hostKind: HostKind; inOffice: boolean }) {
     const list = appendAuditLocal({
       action,
       host: props.hostKind,
-      model: provider.model,
+      model: activeModel,
       summary,
       ...extra
     });
@@ -136,25 +149,85 @@ export function App(props: { hostKind: HostKind; inOffice: boolean }) {
     }
   }
 
-  function effectiveConfig(base: ProviderConfig, viaCompanion: boolean): ProviderConfig {
+  function effectiveConfig(
+    base: ProviderConfig,
+    viaCompanion: boolean,
+    status: CompanionStatus = companion
+  ): ProviderConfig {
     const headers = { ...(base.headers ?? {}) };
     if (isOpenRouterUrl(base.baseUrl)) {
       headers["HTTP-Referer"] ??= "https://openplugin.local";
       headers["X-Title"] ??= "OpenPlugin";
     }
-    if (viaCompanion && companion.state === "connected") {
+    if (viaCompanion && status.state === "connected") {
       return {
         ...base,
         baseUrl: `${COMPANION_ORIGIN}/v1`,
         headers: {
           ...headers,
-          "x-openplugin-token": companion.token,
+          "x-openplugin-token": status.token,
           "x-openplugin-target": base.baseUrl
         }
       };
     }
     return { ...base, headers };
   }
+
+  useEffect(() => {
+    const ac = new AbortController();
+    void (async () => {
+      if (!provider.baseUrl) {
+        setModels([]);
+        setModelsError(null);
+        setModelsLoading(false);
+        return;
+      }
+      setModelsLoading(true);
+      setModelsError(null);
+      try {
+        const fetched = await listModels({
+          config: effectiveConfig(provider, false),
+          signal: ac.signal
+        });
+        if (ac.signal.aborted) return;
+        setModels(fetched);
+      } catch (err) {
+        if (ac.signal.aborted) return;
+        if (err instanceof LlmError && err.code === "abort") return;
+        if (err instanceof LlmError && err.code === "cors") {
+          let status = companion;
+          if (status.state !== "connected") status = await probeCompanion();
+          setCompanion(status);
+          if (status.state === "connected") {
+            try {
+              const fetched = await listModels({
+                config: effectiveConfig(provider, true, status),
+                signal: ac.signal
+              });
+              if (ac.signal.aborted) return;
+              setModels(fetched);
+              setModelsLoading(false);
+              return;
+            } catch (retryErr) {
+              if (ac.signal.aborted) return;
+              if (retryErr instanceof LlmError && retryErr.code === "abort") return;
+              setModelsError(formatError(retryErr, true));
+              setModels([]);
+              setModelsLoading(false);
+              return;
+            }
+          }
+        }
+        setModelsError(formatError(err, companion.state === "connected"));
+        setModels([]);
+      } finally {
+        if (!ac.signal.aborted) setModelsLoading(false);
+      }
+    })();
+    return () => ac.abort();
+    // Fetch when the endpoint, key, or companion path changes — not on model id edits.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [provider.baseUrl, provider.apiKey, companion.state, modelsTick]);
 
   async function send(text = input) {
     const prompt = text.trim();
@@ -180,12 +253,12 @@ export function App(props: { hostKind: HostKind; inOffice: boolean }) {
       return;
     }
 
-    if (!provider.baseUrl || !provider.model) {
+    if (!provider.baseUrl || !activeModel) {
       setTab("settings");
       return;
     }
     try {
-      assertPolicy(policy, { baseUrl: provider.baseUrl, model: provider.model });
+      assertPolicy(policy, { baseUrl: provider.baseUrl, model: activeModel });
     } catch (err) {
       setLines((l) => [...l, { kind: "error", text: err instanceof Error ? err.message : String(err) }]);
       return;
@@ -218,7 +291,7 @@ export function App(props: { hostKind: HostKind; inOffice: boolean }) {
         setCompanion(status);
         if (status.state === "connected" && !useCompanionFirst) {
           try {
-            const result = await runTurn(message, effectiveConfig(provider, true), controller.signal);
+            const result = await runTurn(message, effectiveConfig(provider, true, status), controller.signal);
             await finishTurn(nextLines, result);
             setBusy(false);
             return;
@@ -238,7 +311,7 @@ export function App(props: { hostKind: HostKind; inOffice: boolean }) {
 
   async function runTurn(userMessage: string, config: ProviderConfig, signal: AbortSignal) {
     return runAgent({
-      config,
+      config: { ...config, model: chatModel || provider.model },
       host,
       skills,
       userMessage,
@@ -278,7 +351,7 @@ export function App(props: { hostKind: HostKind; inOffice: boolean }) {
     if (companion.state === "connected" && policy.audit?.enabled) {
       void postAudit(companion.token, {
         host: props.hostKind,
-        model: provider.model,
+        model: chatModel || provider.model,
         endpoint: provider.baseUrl,
         skill: result.loadedSkills[0],
         toolNames: result.changeset.changes.map((c) => c.op),
@@ -347,6 +420,8 @@ export function App(props: { hostKind: HostKind; inOffice: boolean }) {
         onNewChat={() => {
           abortRef.current?.abort();
           setPending(null);
+          setChatModel(provider.model);
+          setWebSearch(false);
           void persist([], []);
           void clearHistory(props.hostKind);
         }}
@@ -375,11 +450,17 @@ export function App(props: { hostKind: HostKind; inOffice: boolean }) {
           disabledSkills={disabledSkills}
           audit={audit}
           autoApply={alwaysApply}
+          models={modelOptions}
+          modelsError={modelsError}
+          modelsLoading={modelsLoading}
           onClose={() => setTab("chat")}
           onChange={async (next) => {
+            const previousDefault = provider.model;
             setProvider(next);
             await saveProvider(next);
+            if (chatModel === previousDefault) setChatModel(next.model);
           }}
+          onRefreshModels={() => setModelsTick((n) => n + 1)}
           onInstructions={async (text) => {
             setInstructions(text);
             await saveInstructions(text);
@@ -447,11 +528,15 @@ export function App(props: { hostKind: HostKind; inOffice: boolean }) {
             busy={busy}
             disabled={!provider.baseUrl}
             skills={enabledSkills}
-            model={provider.model}
+            model={chatModel}
+            models={modelOptions}
+            webSearch={webSearch}
             onChange={setInput}
             onSend={() => void send()}
             onStop={() => abortRef.current?.abort()}
             onInsertSkill={(name) => setInput(`/${name} `)}
+            onToggleWebSearch={setWebSearch}
+            onModelChange={setChatModel}
           />
         </>
       )}
@@ -470,6 +555,17 @@ function appendAssistant(lines: StoredLine[], text: string): StoredLine[] {
 
 function linesRefTail(lines: StoredLine[]): StoredLine[] {
   return lines;
+}
+
+function unionModels(list: ModelInfo[], ...ids: string[]): ModelInfo[] {
+  const byId = new Map<string, ModelInfo>();
+  for (const model of list) {
+    if (model.id) byId.set(model.id, model);
+  }
+  for (const id of ids) {
+    if (id && !byId.has(id)) byId.set(id, { id });
+  }
+  return [...byId.values()];
 }
 
 function labelFromSnapshot(snap: DocumentSnapshot): string {

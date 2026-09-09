@@ -1,30 +1,51 @@
 import {
   Button,
+  Combobox,
   Menu,
   MenuItem,
   MenuList,
   MenuPopover,
   MenuTrigger,
+  Option,
   Textarea,
+  ToggleButton,
   Tooltip
 } from "@fluentui/react-components";
-import { Add24Regular, Send24Regular, Square24Filled } from "@fluentui/react-icons";
-import { slashSuggestions, type SkillCatalogEntry } from "@openplugin/core";
+import { Add24Regular, Globe24Regular, Send24Regular, Square24Filled } from "@fluentui/react-icons";
+import { slashSuggestions, type ModelInfo, type SkillCatalogEntry } from "@openplugin/core";
+import { useEffect, useMemo, useState } from "react";
 
 export function Composer(props: {
   value: string;
   busy: boolean;
   skills: SkillCatalogEntry[];
   model: string;
+  models: ModelInfo[];
   disabled: boolean;
+  webSearch: boolean;
   onChange: (value: string) => void;
   onSend: () => void;
   onStop: () => void;
   onInsertSkill: (name: string) => void;
+  onToggleWebSearch: (on: boolean) => void;
+  onModelChange: (model: string) => void;
 }) {
   const names = props.skills.map((s) => s.name);
   const suggestions = slashSuggestions(props.value, names);
   const showSlash = props.value.startsWith("/") && !props.value.includes("\n");
+  const [modelText, setModelText] = useState(props.model);
+  useEffect(() => {
+    setModelText(props.model);
+  }, [props.model]);
+  const filteredModels = useMemo(
+    () => filterModels(props.models, modelText, props.model),
+    [props.models, modelText, props.model]
+  );
+
+  function commitModel(next: string, display = next) {
+    setModelText(display);
+    props.onModelChange(next);
+  }
 
   return (
     <div className="op-composer">
@@ -69,13 +90,13 @@ export function Composer(props: {
           <Menu>
             <MenuTrigger disableButtonEnhancement>
               <Button appearance="subtle" size="small" icon={<Add24Regular />}>
-                Skills
+                Add
               </Button>
             </MenuTrigger>
             <MenuPopover>
               <MenuList>
                 {props.skills.length === 0 ? (
-                  <MenuItem disabled>No skills for this host</MenuItem>
+                  <MenuItem disabled>No slash skills for this host</MenuItem>
                 ) : (
                   props.skills.map((s) => (
                     <MenuItem key={s.name} onClick={() => props.onInsertSkill(s.name)}>
@@ -86,7 +107,41 @@ export function Composer(props: {
               </MenuList>
             </MenuPopover>
           </Menu>
-          <span className="op-model">{props.model || "No model"}</span>
+          <ToggleButton
+            className="op-web-toggle"
+            size="small"
+            appearance="subtle"
+            checked={props.webSearch}
+            icon={<Globe24Regular />}
+            onClick={() => props.onToggleWebSearch(!props.webSearch)}
+          >
+            Web
+          </ToggleButton>
+          <div className="op-model">
+            <Combobox
+              aria-label="Model"
+              size="small"
+              freeform
+              placeholder="No model"
+              value={modelText}
+              selectedOptions={props.model ? [props.model] : []}
+              disabled={!props.models.length && !props.model}
+              onOptionSelect={(_, data) => {
+                if (data.optionValue == null) return;
+                commitModel(data.optionValue, data.optionValue);
+              }}
+              onChange={(e) => {
+                const typed = e.target.value;
+                commitModel(modelIdFromInput(props.models, typed), typed);
+              }}
+            >
+              {filteredModels.map((m) => (
+                <Option key={m.id} value={m.id} text={m.name ?? m.id}>
+                  {m.name ?? m.id}
+                </Option>
+              ))}
+            </Combobox>
+          </div>
           {props.busy ? (
             <Tooltip content="Stop" relationship="label">
               <Button appearance="subtle" icon={<Square24Filled />} onClick={props.onStop} />
@@ -104,5 +159,20 @@ export function Composer(props: {
         </div>
       </div>
     </div>
+  );
+}
+
+function modelIdFromInput(models: ModelInfo[], raw: string): string {
+  const exact = models.find((m) => m.id === raw);
+  if (exact) return exact.id;
+  const byName = models.filter((m) => (m.name ?? m.id) === raw);
+  return byName.length === 1 ? byName[0]!.id : raw;
+}
+
+function filterModels(models: ModelInfo[], query: string, selected: string): ModelInfo[] {
+  const q = query.trim().toLowerCase();
+  if (!q || q === selected.trim().toLowerCase()) return models;
+  return models.filter(
+    (m) => m.id.toLowerCase().includes(q) || (m.name?.toLowerCase().includes(q) ?? false)
   );
 }

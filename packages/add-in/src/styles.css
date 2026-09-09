@@ -327,16 +327,25 @@ body,
   align-items: center;
   gap: 8px;
   margin-top: 4px;
+  flex-wrap: wrap;
+}
+
+.op-web-toggle[aria-pressed="true"] {
+  color: var(--op-accent);
 }
 
 .op-model {
   margin-left: auto;
-  font-size: 11px;
-  color: var(--op-muted);
-  max-width: 140px;
-  overflow: hidden;
-  text-overflow: ellipsis;
+  max-width: 180px;
+  min-width: 0;
+  flex: 0 1 180px;
   white-space: nowrap;
+}
+
+.op-model .fui-Combobox {
+  min-width: 0;
+  width: 100%;
+  max-width: 100%;
 }
 
 .op-settings {

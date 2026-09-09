@@ -1,4 +1,10 @@
-import { Changeset, type HostAdapter, type RawFacts, truncateGrid } from "@openplugin/core";
+import {
+  Changeset,
+  excelMatrixAssign,
+  type HostAdapter,
+  type RawFacts,
+  truncateGrid
+} from "@openplugin/core";
 
 async function withExcel<T>(fn: (context: Excel.RequestContext) => Promise<T>): Promise<T> {
   return Excel.run(fn);
@@ -76,11 +82,16 @@ export class ExcelHost implements HostAdapter {
     await withExcel(async (context) => {
       for (const change of changeset.forHost("excel")) {
         if (change.op === "writeRange") {
-          context.workbook.worksheets.getItem(change.sheet).getRange(change.address).values =
-            change.values as string[][];
+          const { address, matrix } = excelMatrixAssign(change.address, change.values);
+          if (matrix.length && matrix[0].length) {
+            context.workbook.worksheets.getItem(change.sheet).getRange(address).values = matrix;
+          }
         } else if (change.op === "setFormulas") {
-          context.workbook.worksheets.getItem(change.sheet).getRange(change.address).formulas =
-            change.formulas;
+          const { address, matrix } = excelMatrixAssign(change.address, change.formulas);
+          if (matrix.length && matrix[0].length) {
+            context.workbook.worksheets.getItem(change.sheet).getRange(address).formulas =
+              matrix as string[][];
+          }
         } else if (change.op === "createTable") {
           context.workbook.tables.add(`${change.sheet}!${change.address}`, true);
         } else if (change.op === "createChart") {
@@ -102,4 +113,4 @@ function mapChart(type: string): Excel.ChartType {
   return Excel.ChartType.columnClustered;
 }
 
-export { sliceGrid, writeIntoGrid };
+export { sliceGrid, writeIntoGrid } from "@openplugin/core";

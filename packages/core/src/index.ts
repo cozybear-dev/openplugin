@@ -46,7 +46,9 @@ export type { AgentEvent, AgentResult } from "./agent/loop.js";
 export type { HostAdapter, RawFacts } from "./hosts/types.js";
 export {
   addressForGrid,
+  addressToBounds,
   colLetter,
+  excelMatrixAssign,
   normalizeGrid,
   sliceGrid,
   truncateGrid,

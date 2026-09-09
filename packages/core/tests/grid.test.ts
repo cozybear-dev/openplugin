@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { addressForGrid, normalizeGrid } from "../src/hosts/types.js";
+import { addressForGrid, excelMatrixAssign, normalizeGrid } from "../src/hosts/types.js";
 
 describe("normalizeGrid", () => {
   it("wraps a 1D row", () => {
@@ -22,5 +22,30 @@ describe("addressForGrid", () => {
   });
   it("keeps a 1x1 write as a cell", () => {
     expect(addressForGrid("B5:Z99", [["x"]])).toBe("B5");
+  });
+});
+
+describe("excelMatrixAssign", () => {
+  it("empty grid → origin cell", () => {
+    expect(excelMatrixAssign("C2:Z99", [])).toEqual({ address: "C2", matrix: [] });
+    expect(excelMatrixAssign("A1:C10", null)).toEqual({ address: "A1", matrix: [] });
+  });
+  it("2×3 at C2 → C2:E3", () => {
+    expect(excelMatrixAssign("C2", [["a", "b", "c"], [1, 2, 3]])).toEqual({
+      address: "C2:E3",
+      matrix: [["a", "b", "c"], [1, 2, 3]]
+    });
+  });
+  it("ignores a too-large claimed span and normalizes jagged input", () => {
+    expect(excelMatrixAssign("A1:C10", [["h1", "h2"], ["c"]])).toEqual({
+      address: "A1:B2",
+      matrix: [["h1", "h2"], ["c", ""]]
+    });
+  });
+  it("wraps a 1D row and sizes from origin", () => {
+    expect(excelMatrixAssign("B5:Z99", ["x", "y"])).toEqual({
+      address: "B5:C5",
+      matrix: [["x", "y"]]
+    });
   });
 });

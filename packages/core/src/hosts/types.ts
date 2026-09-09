@@ -133,6 +133,11 @@ export function addressForGrid(originAddress: string, values: unknown[][]): stri
   return `${origin}:${end}`;
 }
 
+export function excelMatrixAssign(address: string, raw: unknown): { address: string; matrix: unknown[][] } {
+  const matrix = normalizeGrid(raw);
+  return { address: addressForGrid(address, matrix), matrix };
+}
+
 export function writeIntoGrid(grid: unknown[][], address: string, values: unknown[][]): void {
   const { r1, c1 } = addressToBounds(address);
   for (let r = 0; r < values.length; r++) {

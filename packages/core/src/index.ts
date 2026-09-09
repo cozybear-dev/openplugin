@@ -18,11 +18,23 @@ export type { SkillCatalogEntry } from "./skills/registry.js";
 export { Changeset } from "./tools/changeset.js";
 export type { Change, ExcelChange, PptChange, WordChange } from "./tools/changeset.js";
 export { executeHostTool, listToolDefinitions } from "./tools/registry.js";
+export { describeTool } from "./tools/describe.js";
+export {
+  MAP_CHUNK,
+  buildExtractCall,
+  buildMapCall,
+  buildPromptCall,
+  cacheKey,
+  chunkRows,
+  parseExtract,
+  parseMappedArray,
+  serializeRange
+} from "./functions/excel-fn.js";
 
 export { compileSnapshot, estimateTokens, snapshotToPrompt } from "./context/compiler.js";
 export type { DocumentSnapshot } from "./context/compiler.js";
 
-export { assertPolicy, OPEN_POLICY } from "./policy.js";
+export { assertPolicy, mergePolicy, OPEN_POLICY } from "./policy.js";
 export type { Policy } from "./policy.js";
 
 export { runAgent, SYSTEM_PROMPT } from "./agent/loop.js";

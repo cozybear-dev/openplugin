@@ -152,6 +152,21 @@ describe("chatCompletions", () => {
     expect(headers?.get("Authorization")).toBeNull();
   });
 
+  it("adds OpenRouter etiquette headers", async () => {
+    let headers: Headers | undefined;
+    const fetchImpl: typeof fetch = async (_input, init) => {
+      headers = new Headers(init?.headers);
+      return sseResponse(["data: {\"choices\":[{\"delta\":{}}]}\n\n", "data: [DONE]\n\n"]);
+    };
+    await chatCompletions({
+      config: { ...config, baseUrl: "https://openrouter.ai/api/v1", apiKey: "sk-or" },
+      messages,
+      fetchImpl
+    });
+    expect(headers?.get("X-Title")).toBe("OpenPlugin");
+    expect(headers?.get("HTTP-Referer")).toBe("https://openplugin.local");
+  });
+
   it("aborts when the signal fires", async () => {
     const controller = new AbortController();
     const fetchImpl: typeof fetch = async (_input, init) => {

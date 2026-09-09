@@ -1,23 +1,58 @@
 import type { ProviderConfig } from "@openplugin/core";
 
 export type EndpointPreset = {
-  id: string;
+  id: "openrouter" | "ollama" | "custom";
   name: string;
   baseUrl: string;
   model: string;
+  needsKey: boolean;
 };
 
 export const PRESETS: EndpointPreset[] = [
-  { id: "xai", name: "SpaceXAI (xAI)", baseUrl: "https://api.x.ai/v1", model: "grok-4.5" },
-  { id: "groq", name: "Groq", baseUrl: "https://api.groq.com/openai/v1", model: "llama-3.3-70b-versatile" },
-  { id: "openrouter", name: "OpenRouter", baseUrl: "https://openrouter.ai/api/v1", model: "openai/gpt-4o-mini" },
-  { id: "ollama", name: "Ollama (local)", baseUrl: "http://127.0.0.1:11434/v1", model: "llama3.1" },
-  { id: "custom", name: "Custom OpenAI-compatible", baseUrl: "https://", model: "" }
+  {
+    id: "openrouter",
+    name: "OpenRouter",
+    baseUrl: "https://openrouter.ai/api/v1",
+    model: "openai/gpt-4o-mini",
+    needsKey: true
+  },
+  {
+    id: "ollama",
+    name: "Ollama (local)",
+    baseUrl: "http://127.0.0.1:11434/v1",
+    model: "llama3.1",
+    needsKey: false
+  },
+  {
+    id: "custom",
+    name: "Custom OpenAI-compatible",
+    baseUrl: "",
+    model: "",
+    needsKey: true
+  }
 ];
 
+export const COMPANION_ORIGIN = "http://127.0.0.1:8788";
+
 export const DEFAULT_PROVIDER: ProviderConfig = {
-  baseUrl: PRESETS[0].baseUrl,
-  model: PRESETS[0].model,
+  baseUrl: "",
+  model: "",
   timeoutMs: 120000,
   maxOutputTokens: 2048
 };
+
+export function matchPreset(baseUrl: string): EndpointPreset {
+  const normalized = baseUrl.replace(/\/+$/, "");
+  const found = PRESETS.find(
+    (p) => p.id !== "custom" && p.baseUrl.replace(/\/+$/, "") === normalized
+  );
+  return found ?? PRESETS.find((p) => p.id === "custom")!;
+}
+
+export function isOllamaUrl(baseUrl: string): boolean {
+  return /127\.0\.0\.1:11434|localhost:11434/i.test(baseUrl);
+}
+
+export function isOpenRouterUrl(baseUrl: string): boolean {
+  return /openrouter\.ai/i.test(baseUrl);
+}

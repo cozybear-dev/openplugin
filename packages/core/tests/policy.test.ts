@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { assertPolicy, OPEN_POLICY } from "../src/policy.js";
+import { assertPolicy, mergePolicy, OPEN_POLICY } from "../src/policy.js";
 
 describe("assertPolicy", () => {
   it("allows any endpoint under the open policy", () => {
@@ -33,5 +33,23 @@ describe("assertPolicy", () => {
     expect(() =>
       assertPolicy(policy, { baseUrl: "https://llm.corp.example/v1", model: "qwen2.5-32b" })
     ).not.toThrow();
+  });
+});
+
+describe("mergePolicy", () => {
+  it("does not let a user widen the tenant allowlist", () => {
+    const tenant = {
+      allowedEndpoints: ["https://llm.corp.example"],
+      allowedModels: ["qwen2.5-32b"],
+      denyExecuteJs: true
+    };
+    const merged = mergePolicy(tenant, {
+      allowedEndpoints: ["https://evil.example"],
+      allowedModels: ["gpt-4o", "qwen2.5-32b"],
+      denyExecuteJs: false
+    });
+    expect(merged.allowedEndpoints).toEqual(["https://llm.corp.example"]);
+    expect(merged.allowedModels).toEqual(["qwen2.5-32b"]);
+    expect(merged.denyExecuteJs).toBe(true);
   });
 });

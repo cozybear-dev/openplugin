@@ -17,7 +17,12 @@ export default defineConfig(async ({ command }): Promise<UserConfig> => {
       rollupOptions: {
         input: {
           taskpane: "taskpane.html",
-          commands: "commands.html"
+          commands: "commands.html",
+          functions: "src/functions.ts"
+        },
+        output: {
+          entryFileNames: (chunk) =>
+            chunk.name === "functions" ? "functions.js" : "assets/[name]-[hash].js"
         }
       }
     }

@@ -1,0 +1,22 @@
+{
+  "name": "@openplugin/companion",
+  "version": "0.1.0",
+  "license": "Apache-2.0",
+  "type": "module",
+  "bin": {
+    "openplugin-companion": "./src/server.ts"
+  },
+  "scripts": {
+    "start": "node --experimental-strip-types src/server.ts",
+    "test": "vitest run",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@openplugin/core": "0.1.0"
+  },
+  "devDependencies": {
+    "@types/node": "^24.3.0",
+    "typescript": "^5.9.2",
+    "vitest": "^3.2.4"
+  }
+}

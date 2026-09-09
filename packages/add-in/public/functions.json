@@ -1,0 +1,41 @@
+{
+  "allowCustomDataForDataTypeAny": true,
+  "functions": [
+    {
+      "id": "PROMPT",
+      "name": "PROMPT",
+      "description": "Ask the configured OpenPlugin model a prompt, optionally grounded in a range.",
+      "parameters": [
+        { "name": "prompt", "description": "Prompt", "type": "string" },
+        {
+          "name": "range",
+          "description": "Optional grounding range",
+          "type": "any",
+          "optional": true,
+          "dimensionality": "matrix"
+        }
+      ],
+      "result": { "type": "string" }
+    },
+    {
+      "id": "MAP",
+      "name": "MAP",
+      "description": "Map each row of a range through an instruction. Returns one column.",
+      "parameters": [
+        { "name": "range", "description": "Input rows", "type": "any", "dimensionality": "matrix" },
+        { "name": "instruction", "description": "What to do to each row", "type": "string" }
+      ],
+      "result": { "dimensionality": "matrix", "type": "string" }
+    },
+    {
+      "id": "EXTRACT",
+      "name": "EXTRACT",
+      "description": "Extract fields described by a comma-separated schema from a range.",
+      "parameters": [
+        { "name": "range", "description": "Source range", "type": "any", "dimensionality": "matrix" },
+        { "name": "schema", "description": "Comma-separated field names", "type": "string" }
+      ],
+      "result": { "dimensionality": "matrix", "type": "any" }
+    }
+  ]
+}

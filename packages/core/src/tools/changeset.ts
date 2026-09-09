@@ -42,9 +42,15 @@ export class Changeset {
     this.changes.length = 0;
   }
 
+  previewItems(): Array<{ title: string; detail: string }> {
+    return this.changes.map((c) => item(c));
+  }
+
   preview(): string {
     if (this.changes.length === 0) return "No pending changes.";
-    return this.changes.map((c, i) => `${i + 1}. ${describe(c)}`).join("\n");
+    return this.previewItems()
+      .map((row, i) => `${i + 1}. ${row.title}${row.detail ? ` — ${row.detail}` : ""}`)
+      .join("\n");
   }
 
   forHost(host: HostKind): Change[] {
@@ -52,36 +58,36 @@ export class Changeset {
   }
 }
 
-function describe(change: Change): string {
+function item(change: Change): { title: string; detail: string } {
   switch (change.op) {
     case "writeRange":
-      return `excel writeRange ${change.sheet}!${change.address} ← ${summarizeGrid(change.values)}`;
+      return { title: `Write ${change.sheet}!${change.address}`, detail: summarizeGrid(change.values) };
     case "setFormulas":
-      return `excel setFormulas ${change.sheet}!${change.address}`;
+      return { title: `Formulas ${change.sheet}!${change.address}`, detail: "" };
     case "createTable":
-      return `excel createTable ${change.sheet}!${change.address}`;
+      return { title: `Create table ${change.sheet}!${change.address}`, detail: change.name ?? "" };
     case "createChart":
-      return `excel createChart ${change.chartType} from ${change.source}`;
+      return { title: `Chart (${change.chartType})`, detail: change.source };
     case "replaceSelection":
-      return `word replaceSelection ← ${clip(change.text)}`;
+      return { title: "Replace selection", detail: clip(change.text) };
     case "insertParagraphs":
-      return `word insertParagraphs (${change.location}) ← ${clip(change.paragraphs.join(" / "))}`;
+      return { title: `Insert paragraphs (${change.location})`, detail: clip(change.paragraphs.join(" / ")) };
     case "searchReplace":
-      return `word searchReplace "${change.search}" → "${change.replace}"`;
+      return { title: "Find and replace", detail: `"${change.search}" → "${change.replace}"` };
     case "applyStyle":
-      return `word applyStyle ${change.style}`;
+      return { title: "Apply style", detail: change.style };
     case "insertTable":
-      return `word insertTable ${change.rows}x${change.cols}`;
+      return { title: "Insert table", detail: `${change.rows}×${change.cols}` };
     case "insertComment":
-      return `word insertComment ← ${clip(change.text)}`;
+      return { title: "Insert comment", detail: clip(change.text) };
     case "setShapeText":
-      return `ppt setShapeText slide ${change.slideIndex} ← ${clip(change.text)}`;
+      return { title: `Edit slide ${change.slideIndex + 1}`, detail: clip(change.text) };
     case "addSlide":
-      return `ppt addSlide "${change.title}"`;
+      return { title: "Add slide", detail: change.title };
     case "setNotes":
-      return `ppt setNotes slide ${change.slideIndex}`;
+      return { title: `Speaker notes · slide ${change.slideIndex + 1}`, detail: clip(change.notes) };
     case "deleteSlide":
-      return `ppt deleteSlide ${change.slideIndex}`;
+      return { title: `Delete slide ${change.slideIndex + 1}`, detail: "" };
   }
 }
 

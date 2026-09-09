@@ -2,6 +2,7 @@ import { FluentProvider, webLightTheme } from "@fluentui/react-components";
 import { StrictMode } from "react";
 import { createRoot } from "react-dom/client";
 import { App } from "./App";
+import "./functions";
 import { hostKindFromOffice } from "./runtime-host";
 import "./styles.css";
 

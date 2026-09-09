@@ -10,7 +10,7 @@ Chat sidebars are a crowded market. OpenPlugin is a **document runtime for agent
 
 - Typed Office tools and a previewable changeset (not generated JavaScript by default)
 - Portable `SKILL.md` packs, not a proprietary prompt dump
-- Any OpenAI-compatible base URL (SpaceXAI/xAI, Groq, OpenRouter, Azure, vLLM, Ollama, …)
+- Any OpenAI-compatible base URL. Presets: **OpenRouter**, **Ollama (local)**, **Custom**.
 - Enterprise pays for **governance** (allowlists, audit, Entra, air-gap) — not for the right to use a model
 
 ## Requirements
@@ -24,6 +24,7 @@ Chat sidebars are a crowded market. OpenPlugin is a **document runtime for agent
 ```bash
 npm install
 npm test
+npm run companion          # optional; required for most Ollama setups
 npm run start:excel
 ```
 
@@ -32,9 +33,11 @@ npm run start:excel
 On first run, Office will trust a local HTTPS certificate from `office-addin-dev-certs`. Then:
 
 1. Open the **OpenPlugin** ribbon tab → **Open**
-2. Settings → pick a preset or paste your base URL, model, and API key
+2. Gear → pick **OpenRouter**, **Ollama (local)**, or **Custom OpenAI-compatible**
 3. **Test connection**
-4. Ask it to edit the selection. Review the changeset. **Apply**
+4. Use a prompt chip or type. Review the change list. **Apply**
+
+Excel custom functions (after sideload): `=OP.PROMPT("hello")`, `=OP.MAP(A2:A10, "uppercase")`, `=OP.EXTRACT(A1:D20, "name, amount")`.
 
 ### Manual sideload
 
@@ -52,10 +55,9 @@ The add-in calls your endpoint **from the Office WebView**. The server must send
 
 | Setup | Usually works direct? |
 |---|---|
-| SpaceXAI (`https://api.x.ai/v1`) | Yes, if CORS is enabled on the API |
-| Groq, OpenRouter | Often yes |
-| Azure OpenAI | Paste the **full** deployment URL including `/chat/completions?api-version=...` and put the key in **API key** (sent as `api-key` if you add that header later; Bearer works for many gateways) |
-| Ollama / LM Studio on localhost | Often **no** (CORS + Private Network Access). Enable CORS on the server, or wait for the optional companion in phase 2 |
+| OpenRouter | Often yes |
+| Custom (Azure, vLLM, …) | Paste the **full** `/v1` or `/chat/completions?api-version=` URL. Server must send CORS, or use the companion |
+| Ollama on localhost | Usually **no** without CORS. Run `npm run companion` and keep the Ollama preset |
 
 OSS builds have **no telemetry**.
 
@@ -73,11 +75,13 @@ Author a new folder, add `name` / `description`, and set `metadata.openplugin/ho
 ## Repo
 
 ```
-packages/core          Agent, LLM client, skills, tools, context compiler
+packages/core          Agent, LLM client, skills, tools, context compiler, Excel function helpers
 packages/add-in        Task pane (React + Fluent UI)
+packages/companion     Loopback CORS/Ollama proxy + audit + policy
 packages/host-excel    Office.js Excel adapter
 packages/host-word     Office.js Word adapter
 packages/host-powerpoint
+packages/enterprise    Policy format, AppSource notes (commercial)
 skills/                Bundled Agent Skills
 ```
 
@@ -91,4 +95,4 @@ See `CLA.md` if you contribute.
 
 ## Status
 
-Phase 1: sideloadable agent with typed tools, skills, and tests that run without Office installed (`npm test`). Excel custom functions, the local companion, and enterprise policy are later phases.
+Sideloadable agent with a review-first task pane, OpenRouter / Ollama / custom presets, Excel `OP.*` functions, a loopback companion, and tenant `policy.json` via the companion. Tests run without Office (`npm test`).

@@ -1,94 +1,217 @@
+:root {
+  --op-navy: #14305c;
+  --op-accent: #0f6cbd;
+  --op-bg: #f5f7fa;
+  --op-card: #ffffff;
+  --op-line: #e5e8eb;
+  --op-text: #242424;
+  --op-muted: #616161;
+}
+
 html,
 body,
 #root {
   margin: 0;
   height: 100%;
+  background: var(--op-bg);
+  color: var(--op-text);
   font-family: "Segoe UI", system-ui, sans-serif;
 }
 
-.shell {
+.op-shell {
   display: flex;
   flex-direction: column;
-  gap: 8px;
   height: 100%;
-  padding: 12px;
-  box-sizing: border-box;
+  min-height: 0;
 }
 
-.top {
+.op-header {
   display: flex;
-  align-items: baseline;
+  align-items: center;
   justify-content: space-between;
+  padding: 10px 12px 8px;
+  border-bottom: 1px solid var(--op-line);
+  background: var(--op-card);
 }
 
-.host-badge {
-  text-transform: uppercase;
-  letter-spacing: 0.06em;
-  opacity: 0.7;
+.op-brand {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  min-width: 0;
 }
 
-.thread {
+.op-mark {
+  width: 22px;
+  height: 22px;
+  border-radius: 6px;
+  background: linear-gradient(135deg, var(--op-navy), #38bdf8);
+  flex-shrink: 0;
+}
+
+.op-title {
+  font-size: 13px;
+  font-weight: 600;
+  letter-spacing: 0.01em;
+}
+
+.op-context {
+  color: var(--op-muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 220px;
+  display: block;
+}
+
+.op-header-actions {
+  display: flex;
+  gap: 2px;
+}
+
+.op-empty,
+.op-thread,
+.op-settings {
   flex: 1;
   overflow: auto;
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-  padding: 8px 0;
+  padding: 16px 14px;
 }
 
-.line {
-  padding: 8px 10px;
-  border-radius: 8px;
-  white-space: pre-wrap;
-  font-size: 13px;
-}
-
-.line.user {
-  background: #e8f1fb;
-  align-self: flex-end;
-}
-
-.line.assistant {
-  background: #f4f4f4;
-}
-
-.line.tool {
-  background: #f0f7ea;
-  font-family: ui-monospace, Consolas, monospace;
-  font-size: 12px;
-}
-
-.line.error {
-  background: #fde7e9;
-}
-
-.composer {
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-}
-
-.changeset {
-  border: 1px solid #d0d0d0;
-  border-radius: 8px;
-  padding: 8px;
-  background: #fffbe6;
-}
-
-.changeset pre {
-  white-space: pre-wrap;
-  font-size: 12px;
-  margin: 0 0 8px;
-}
-
-.row {
-  display: flex;
-  gap: 8px;
-}
-
-.settings {
+.op-empty {
   display: flex;
   flex-direction: column;
   gap: 12px;
-  overflow: auto;
+  justify-content: center;
+}
+
+.op-chips {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  align-items: flex-start;
+}
+
+.op-thread {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.op-msg {
+  max-width: 100%;
+  padding: 8px 10px;
+  border-radius: 12px;
+  font-size: 13px;
+  line-height: 1.45;
+  white-space: pre-wrap;
+}
+
+.op-msg-user {
+  align-self: flex-end;
+  background: #e8f3fc;
+  border-bottom-right-radius: 4px;
+}
+
+.op-msg-assistant {
+  align-self: stretch;
+  background: var(--op-card);
+  border: 1px solid var(--op-line);
+  border-bottom-left-radius: 4px;
+}
+
+.op-msg-tool {
+  align-self: flex-start;
+  background: transparent;
+  padding: 0 4px;
+  color: var(--op-muted);
+}
+
+.op-msg-error {
+  background: #fde7e9;
+  color: #6e0811;
+}
+
+.op-cite {
+  border: none;
+  background: #e8f3fc;
+  color: var(--op-accent);
+  font: inherit;
+  padding: 0 3px;
+  border-radius: 4px;
+  cursor: pointer;
+}
+
+.op-review {
+  margin: 0 12px 8px;
+  padding: 10px 12px;
+  background: var(--op-card);
+  border: 1px solid var(--op-line);
+  border-radius: 12px;
+}
+
+.op-review-kicker {
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--op-muted);
+}
+
+.op-review ul {
+  margin: 8px 0;
+  padding-left: 16px;
+}
+
+.op-review li {
+  margin: 4px 0;
+}
+
+.op-review-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.op-composer {
+  padding: 8px 12px 12px;
+  background: var(--op-bg);
+}
+
+.op-composer-box {
+  background: var(--op-card);
+  border: 1px solid var(--op-line);
+  border-radius: 14px;
+  padding: 6px 8px 8px;
+}
+
+.op-composer-bar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 4px;
+}
+
+.op-model {
+  margin-left: auto;
+  font-size: 11px;
+  color: var(--op-muted);
+  max-width: 140px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.op-settings {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.op-settings-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.op-import {
+  display: flex;
+  gap: 8px;
 }

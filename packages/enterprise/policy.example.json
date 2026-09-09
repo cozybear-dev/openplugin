@@ -1,0 +1,9 @@
+{
+  "allowedEndpoints": ["https://openrouter.ai/api/v1", "http://127.0.0.1:11434/v1"],
+  "allowedModels": ["openai/gpt-4o-mini", "llama3.1"],
+  "allowedSkills": "*",
+  "denyExecuteJs": true,
+  "requireCompanion": false,
+  "audit": { "enabled": true, "redact": "prompts" },
+  "catalogUrl": ""
+}

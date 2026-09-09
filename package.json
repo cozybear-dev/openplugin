@@ -9,7 +9,8 @@
     "packages/add-in",
     "packages/host-excel",
     "packages/host-word",
-    "packages/host-powerpoint"
+    "packages/host-powerpoint",
+    "packages/companion"
   ],
   "scripts": {
     "test": "npm test --workspaces --if-present",
@@ -21,6 +22,7 @@
     "start:word": "npm run start:word -w @openplugin/add-in",
     "start:powerpoint": "npm run start:powerpoint -w @openplugin/add-in",
     "stop": "npm run stop -w @openplugin/add-in",
+    "companion": "npm run start -w @openplugin/companion",
     "typecheck": "npm run typecheck --workspaces --if-present"
   },
   "engines": {

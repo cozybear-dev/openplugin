@@ -1,13 +1,30 @@
 # OpenPlugin Enterprise
 
-Commercial governance package. Not required for the open-source agent.
+Commercial governance. The agent itself stays Apache-2.0.
 
-Planned surface:
+Drop `policy.json` next to the companion data directory:
 
-- Tenant policy (`allowedEndpoints`, `allowedModels`, `allowedSkills`, `denyExecuteJs`)
-- Entra ID sign-in
-- Audit export (JSONL / SIEM)
-- Signed internal skill catalog
-- Air-gapped installer and LTS
+- Windows: `%LOCALAPPDATA%\OpenPlugin\policy.json`
+- macOS/Linux: `~/.openplugin/policy.json`
 
-The OSS add-in exposes a `PolicyProvider` seam; this package is the paid implementation. Source-available under a commercial license — not Apache-2.0.
+Or set `OPENPLUGIN_HOME`. See `policy.example.json`.
+
+The OSS add-in **loads** this file through the companion (`GET /policy`) and enforces it with `assertPolicy`. Users cannot widen allowlists.
+
+## What you get
+
+| Control | How |
+|---|---|
+| Endpoint / model / skill allowlists | `policy.json` |
+| Disable generated JS | `denyExecuteJs: true` (default) |
+| Require companion | `requireCompanion: true` |
+| Audit log | `%LOCALAPPDATA%\OpenPlugin\audit.jsonl` |
+| Internal skill catalog | `catalogUrl` pointing at `{ "skills": [{ "name", "url" }] }` |
+
+## Optional Entra ID
+
+The add-in does not require sign-in. To stamp audit rows with the signed-in Microsoft account, register an app in Entra ID, add `webApplicationInfo` to the manifest, and grant admin consent. If `Office.auth.getAccessToken` fails, the agent still runs and audit `user` is `"local"`.
+
+## AppSource
+
+See `appsource-notes.md`. This package does not submit the listing for you.

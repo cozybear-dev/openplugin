@@ -1,278 +1,342 @@
 import {
-  chatCompletions,
+  assertPolicy,
+  compileSnapshot,
+  describeTool,
   LlmError,
+  mergePolicy,
+  OPEN_POLICY,
   runAgent,
-  type AgentEvent,
   type AgentResult,
   type ChatMessage,
+  type DocumentSnapshot,
   type HostKind,
-  type ProviderConfig
+  type Policy,
+  type ProviderConfig,
+  type Skill
 } from "@openplugin/core";
-import {
-  Body1,
-  Button,
-  Dropdown,
-  Field,
-  Input,
-  Option,
-  Spinner,
-  Tab,
-  TabList,
-  Textarea,
-  Title3
-} from "@fluentui/react-components";
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { bundledSkills } from "./bundled-skills";
-import { PRESETS } from "./presets";
+import { fetchPolicy, postAudit, probeCompanion, type CompanionStatus } from "./companion";
+import { clearHistory, loadHistory, saveHistory, type StoredLine } from "./history";
+import { COMPANION_ORIGIN, isOllamaUrl, isOpenRouterUrl } from "./presets";
 import { createHost } from "./runtime-host";
-import { loadProvider, saveProvider } from "./settings";
-
-type ChatLine =
-  | { kind: "user"; text: string }
-  | { kind: "assistant"; text: string }
-  | { kind: "tool"; text: string }
-  | { kind: "error"; text: string };
+import { loadInstructions, loadProvider, loadUserPolicy, saveInstructions, saveProvider } from "./settings";
+import { importCatalog, importSkillFromUrl, listImportedSkills } from "./skill-store";
+import { Composer } from "./ui/Composer";
+import { EmptyState } from "./ui/EmptyState";
+import { formatError, SettingsPanel } from "./ui/SettingsPanel";
+import { Header } from "./ui/Header";
+import { ReviewCard } from "./ui/ReviewCard";
+import { Thread } from "./ui/Thread";
 
 export function App(props: { hostKind: HostKind; inOffice: boolean }) {
   const host = useMemo(() => createHost(props.hostKind, props.inOffice), [props.hostKind, props.inOffice]);
-  const skills = useMemo(() => bundledSkills(), []);
-  const [tab, setTab] = useState<"chat" | "settings">("chat");
-  const [provider, setProvider] = useState<ProviderConfig>(loadProvider);
-  const [input, setInput] = useState("");
-  const [lines, setLines] = useState<ChatLine[]>([]);
-  const [history, setHistory] = useState<ChatMessage[]>([]);
-  const [busy, setBusy] = useState(false);
-  const [preview, setPreview] = useState<string | null>(null);
-  const [pending, setPending] = useState<AgentResult | null>(null);
-  const [status, setStatus] = useState<string | null>(null);
+  const [imported, setImported] = useState<Skill[]>([]);
+  const skills = useMemo(() => {
+    const reg = bundledSkills();
+    for (const s of imported) reg.add(s);
+    return reg;
+  }, [imported]);
 
-  async function send() {
-    const text = input.trim();
-    if (!text || busy) return;
-    setInput("");
-    setLines((l) => [...l, { kind: "user", text }]);
-    setBusy(true);
-    setStatus(null);
-    const controller = new AbortController();
-    try {
-      const result = await runAgent({
-        config: provider,
-        host,
-        skills,
-        userMessage: text,
-        history,
-        signal: controller.signal,
-        onEvent: (event: AgentEvent) => {
-          if (event.type === "text") {
-            setLines((l) => {
-              const last = l[l.length - 1];
-              if (last?.kind === "assistant") {
-                return [...l.slice(0, -1), { kind: "assistant", text: last.text + event.delta }];
-              }
-              return [...l, { kind: "assistant", text: event.delta }];
-            });
-          } else if (event.type === "tool") {
-            setLines((l) => [...l, { kind: "tool", text: event.name }]);
-          } else if (event.type === "skill") {
-            setLines((l) => [...l, { kind: "tool", text: `skill:${event.name}` }]);
-          } else if (event.type === "error") {
-            setLines((l) => [...l, { kind: "error", text: event.message }]);
+  const [provider, setProvider] = useState<ProviderConfig>(loadProvider);
+  const [instructions, setInstructions] = useState(loadInstructions);
+  const [companion, setCompanion] = useState<CompanionStatus>({ state: "unknown" });
+  const [policy, setPolicy] = useState<Policy>(OPEN_POLICY);
+  const [tab, setTab] = useState<"chat" | "settings">("chat");
+  const [input, setInput] = useState("");
+  const [lines, setLines] = useState<StoredLine[]>(() => loadHistory(props.hostKind).lines);
+  const [history, setHistory] = useState<ChatMessage[]>(() => loadHistory(props.hostKind).messages);
+  const [busy, setBusy] = useState(false);
+  const [pending, setPending] = useState<AgentResult | null>(null);
+  const [alwaysApply, setAlwaysApply] = useState(false);
+  const [contextLabel, setContextLabel] = useState(props.hostKind);
+  const [snapshot, setSnapshot] = useState<DocumentSnapshot | undefined>();
+  const abortRef = useRef<AbortController | null>(null);
+
+  useEffect(() => {
+    void (async () => {
+      setImported(await listImportedSkills().catch(() => []));
+      const status = await probeCompanion();
+      setCompanion(status);
+      if (status.state === "connected") {
+        const tenant = (await fetchPolicy(status.token)) as Policy | null;
+        if (tenant) {
+          const merged = mergePolicy(tenant, loadUserPolicy() ?? undefined);
+          setPolicy(merged);
+          if (merged.catalogUrl) {
+            const extra = await importCatalog(merged.catalogUrl).catch(() => []);
+            setImported((s) => [...s, ...extra]);
           }
         }
+      }
+    })();
+  }, []);
+
+  useEffect(() => {
+    void refreshContext();
+    try {
+      Office.context.document.addHandlerAsync(Office.EventType.DocumentSelectionChanged, () => {
+        void refreshContext();
       });
-      setHistory(
-        result.messages.filter(
-          (m): m is ChatMessage => m.role === "user" || m.role === "assistant" || m.role === "tool"
-        )
-      );
-      if (result.finalText) {
-        setLines((l) => {
-          const last = l[l.length - 1];
-          if (last?.kind === "assistant") return l;
-          return [...l, { kind: "assistant", text: result.finalText }];
-        });
-      }
-      if (!result.changeset.isEmpty()) {
-        setPreview(result.changeset.preview());
-        setPending(result);
-      } else {
-        setPreview(null);
-        setPending(null);
-      }
+    } catch {
+      /* browser */
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [host]);
+
+  async function refreshContext() {
+    try {
+      const snap = await compileSnapshot(host, { tokenBudget: 800, previous: snapshot });
+      setSnapshot(snap);
+      setContextLabel(labelFromSnapshot(snap));
+    } catch {
+      setContextLabel(props.hostKind);
+    }
+  }
+
+  async function persist(nextLines: StoredLine[], nextMessages: ChatMessage[]) {
+    setLines(nextLines);
+    setHistory(nextMessages);
+    await saveHistory(props.hostKind, nextLines, nextMessages);
+  }
+
+  function effectiveConfig(base: ProviderConfig, viaCompanion: boolean): ProviderConfig {
+    const headers = { ...(base.headers ?? {}) };
+    if (isOpenRouterUrl(base.baseUrl)) {
+      headers["HTTP-Referer"] ??= "https://openplugin.local";
+      headers["X-Title"] ??= "OpenPlugin";
+    }
+    if (viaCompanion && companion.state === "connected") {
+      return {
+        ...base,
+        baseUrl: `${COMPANION_ORIGIN}/v1`,
+        headers: {
+          ...headers,
+          "x-openplugin-token": companion.token,
+          "x-openplugin-target": base.baseUrl
+        }
+      };
+    }
+    return { ...base, headers };
+  }
+
+  async function send(text = input) {
+    const prompt = text.trim();
+    if (!prompt || busy) return;
+    if (!provider.baseUrl || !provider.model) {
+      setTab("settings");
+      return;
+    }
+    try {
+      assertPolicy(policy, { baseUrl: provider.baseUrl, model: provider.model });
     } catch (err) {
-      setLines((l) => [...l, { kind: "error", text: formatError(err) }]);
+      setLines((l) => [...l, { kind: "error", text: err instanceof Error ? err.message : String(err) }]);
+      return;
+    }
+    setInput("");
+    const userLine: StoredLine = { kind: "user", text: prompt };
+    const nextLines = [...lines, userLine];
+    setLines(nextLines);
+    setBusy(true);
+    const controller = new AbortController();
+    abortRef.current = controller;
+
+    const useCompanionFirst = isOllamaUrl(provider.baseUrl) && companion.state === "connected";
+    const message = instructions.trim()
+      ? `${prompt}\n\nStanding instructions:\n${instructions.trim()}`
+      : prompt;
+
+    try {
+      const result = await runTurn(message, effectiveConfig(provider, useCompanionFirst), controller.signal);
+      await finishTurn(nextLines, result);
+    } catch (err) {
+      if (err instanceof LlmError && err.code === "cors") {
+        let status = companion;
+        if (status.state !== "connected") status = await probeCompanion();
+        setCompanion(status);
+        if (status.state === "connected" && !useCompanionFirst) {
+          try {
+            const result = await runTurn(message, effectiveConfig(provider, true), controller.signal);
+            await finishTurn(nextLines, result);
+            setBusy(false);
+            return;
+          } catch (retryErr) {
+            setLines([...nextLines, { kind: "error", text: formatError(retryErr, true) }]);
+            setBusy(false);
+            return;
+          }
+        }
+      }
+      setLines([...nextLines, { kind: "error", text: formatError(err, companion.state === "connected") }]);
     } finally {
       setBusy(false);
+      abortRef.current = null;
+    }
+  }
+
+  async function runTurn(userMessage: string, config: ProviderConfig, signal: AbortSignal) {
+    return runAgent({
+      config,
+      host,
+      skills,
+      userMessage,
+      history,
+      previousSnapshot: snapshot,
+      policy,
+      signal,
+      onEvent: (event) => {
+        if (event.type === "text") {
+          setLines((l) => {
+            const last = l[l.length - 1];
+            if (last?.kind === "assistant") {
+              return [...l.slice(0, -1), { kind: "assistant", text: last.text + event.delta }];
+            }
+            return [...l, { kind: "assistant", text: event.delta }];
+          });
+        } else if (event.type === "tool") {
+          setLines((l) => [...l, { kind: "tool", text: describeTool(event.name, (event.args ?? {}) as Record<string, unknown>) }]);
+        } else if (event.type === "skill") {
+          setLines((l) => [...l, { kind: "tool", text: `Using skill ${event.name}` }]);
+        } else if (event.type === "error") {
+          setLines((l) => [...l, { kind: "error", text: event.message }]);
+        }
+      }
+    });
+  }
+
+  async function finishTurn(baseLines: StoredLine[], result: AgentResult) {
+    const withFinal = result.finalText
+      ? appendAssistant(baseLines, result.finalText)
+      : linesRefTail(baseLines);
+    const msgs = result.messages.filter(
+      (m): m is ChatMessage => m.role === "user" || m.role === "assistant" || m.role === "tool"
+    );
+    await persist(withFinal, msgs);
+    setSnapshot(result.snapshot);
+    if (companion.state === "connected" && policy.audit?.enabled) {
+      void postAudit(companion.token, {
+        host: props.hostKind,
+        model: provider.model,
+        endpoint: provider.baseUrl,
+        skill: result.loadedSkills[0],
+        toolNames: result.changeset.changes.map((c) => c.op),
+        tokenEstimate: result.snapshot.tokenEstimate,
+        user: "local"
+      });
+    }
+    if (!result.changeset.isEmpty()) {
+      if (alwaysApply) {
+        await host.apply(result.changeset);
+        result.changeset.clear();
+        setPending(null);
+      } else {
+        setPending(result);
+      }
+    } else {
+      setPending(null);
     }
   }
 
   async function apply() {
-    const result = pending;
-    if (!result) return;
-    await host.apply(result.changeset);
-    result.changeset.clear();
-    setPreview(null);
+    if (!pending) return;
+    await host.apply(pending.changeset);
+    pending.changeset.clear();
     setPending(null);
-    setStatus("Applied.");
-  }
-
-  function reject() {
-    setPreview(null);
-    setPending(null);
-    setStatus("Discarded.");
   }
 
   return (
-    <div className="shell">
-      <header className="top">
-        <Title3>OpenPlugin</Title3>
-        <Body1 className="host-badge">{props.hostKind}</Body1>
-      </header>
-      <TabList
-        selectedValue={tab}
-        onTabSelect={(_, data) => setTab(data.value as "chat" | "settings")}
-      >
-        <Tab value="chat">Chat</Tab>
-        <Tab value="settings">Settings</Tab>
-      </TabList>
+    <div className="op-shell">
+      <Header
+        hostKind={props.hostKind}
+        contextLabel={contextLabel}
+        onNewChat={() => {
+          abortRef.current?.abort();
+          setPending(null);
+          void persist([], []);
+          void clearHistory(props.hostKind);
+        }}
+        onOpenSettings={() => setTab("settings")}
+      />
       {tab === "settings" ? (
-        <SettingsForm
+        <SettingsPanel
           provider={provider}
+          instructions={instructions}
+          companion={companion}
+          policyNote={policy.catalogUrl ? `Tenant catalog: ${policy.catalogUrl}` : undefined}
+          onClose={() => setTab("chat")}
           onChange={async (next) => {
             setProvider(next);
             await saveProvider(next);
           }}
+          onInstructions={async (text) => {
+            setInstructions(text);
+            await saveInstructions(text);
+          }}
+          onImportUrl={async (url) => {
+            const skill = await importSkillFromUrl(url);
+            setImported((s) => [...s.filter((x) => x.name !== skill.name), skill]);
+          }}
         />
       ) : (
         <>
-          <div className="thread">
-            {lines.length === 0 && (
-              <Body1>
-                Point Settings at any OpenAI-compatible endpoint, then describe an edit. Mutations
-                wait for Apply.
-              </Body1>
-            )}
-            {lines.map((line, i) => (
-              <div key={i} className={`line ${line.kind}`}>
-                {line.text}
-              </div>
-            ))}
-            {busy && <Spinner size="tiny" label="Working" />}
-          </div>
-          {preview && (
-            <div className="changeset">
-              <pre>{preview}</pre>
-              <div className="row">
-                <Button appearance="primary" onClick={() => void apply()}>
-                  Apply
-                </Button>
-                <Button onClick={reject}>Reject</Button>
-              </div>
-            </div>
+          {lines.length === 0 ? (
+            <EmptyState hostKind={props.hostKind} onPick={(p) => void send(p)} />
+          ) : (
+            <Thread hostKind={props.hostKind} lines={lines} busy={busy} />
           )}
-          {status && <Body1>{status}</Body1>}
-          <div className="composer">
-            <Textarea
-              value={input}
-              onChange={(_, d) => setInput(d.value)}
-              placeholder="Ask OpenPlugin to edit the document…"
-              disabled={busy}
-              onKeyDown={(e) => {
-                if (e.key === "Enter" && !e.shiftKey) {
-                  e.preventDefault();
-                  void send();
-                }
+          {pending && !pending.changeset.isEmpty() && (
+            <ReviewCard
+              items={pending.changeset.previewItems()}
+              onApply={() => void apply()}
+              onReject={() => setPending(null)}
+              onAlways={() => {
+                setAlwaysApply(true);
+                void apply();
               }}
             />
-            <Button appearance="primary" disabled={busy || !input.trim()} onClick={() => void send()}>
-              Send
-            </Button>
-          </div>
+          )}
+          <Composer
+            value={input}
+            busy={busy}
+            disabled={!provider.baseUrl}
+            skills={skills.list(props.hostKind)}
+            model={provider.model}
+            onChange={setInput}
+            onSend={() => void send()}
+            onStop={() => abortRef.current?.abort()}
+            onInsertSkill={(name) => setInput((v) => `${v}${v ? " " : ""}Use the ${name} skill. `)}
+          />
         </>
       )}
     </div>
   );
 }
 
-function SettingsForm(props: {
-  provider: ProviderConfig;
-  onChange: (next: ProviderConfig) => Promise<void>;
-}) {
-  const { provider, onChange } = props;
-  const [testing, setTesting] = useState(false);
-  const [testMsg, setTestMsg] = useState<string | null>(null);
-
-  function patch(partial: Partial<ProviderConfig>) {
-    void onChange({ ...provider, ...partial });
+function appendAssistant(lines: StoredLine[], text: string): StoredLine[] {
+  const last = lines[lines.length - 1];
+  if (last?.kind === "assistant") {
+    if (last.text.includes(text)) return lines;
+    return [...lines.slice(0, -1), { kind: "assistant", text: last.text || text }];
   }
-
-  async function testConnection() {
-    setTesting(true);
-    setTestMsg(null);
-    try {
-      const result = await chatCompletions({
-        config: { ...provider, maxOutputTokens: 8 },
-        messages: [{ role: "user", content: "Reply with ok" }]
-      });
-      const text = result.message.role === "assistant" ? result.message.content : "";
-      setTestMsg(`Connected. Model said: ${text || "(empty)"}`);
-    } catch (err) {
-      setTestMsg(formatError(err));
-    } finally {
-      setTesting(false);
-    }
-  }
-
-  return (
-    <div className="settings">
-      <Field label="Preset">
-        <Dropdown
-          value={PRESETS.find((p) => p.baseUrl === provider.baseUrl)?.name ?? "Custom"}
-          onOptionSelect={(_, data) => {
-            const preset = PRESETS.find((p) => p.id === data.optionValue);
-            if (!preset) return;
-            void onChange({ ...provider, baseUrl: preset.baseUrl, model: preset.model || provider.model });
-          }}
-        >
-          {PRESETS.map((p) => (
-            <Option key={p.id} value={p.id}>
-              {p.name}
-            </Option>
-          ))}
-        </Dropdown>
-      </Field>
-      <Field label="Base URL">
-        <Input value={provider.baseUrl} onChange={(_, d) => patch({ baseUrl: d.value })} />
-      </Field>
-      <Field label="Model">
-        <Input value={provider.model} onChange={(_, d) => patch({ model: d.value })} />
-      </Field>
-      <Field label="API key (stored in this Office profile, never in the document)">
-        <Input
-          type="password"
-          value={provider.apiKey ?? ""}
-          onChange={(_, d) => patch({ apiKey: d.value })}
-        />
-      </Field>
-      <Button disabled={testing} onClick={() => void testConnection()}>
-        {testing ? "Testing…" : "Test connection"}
-      </Button>
-      {testMsg && <Body1>{testMsg}</Body1>}
-      <Body1>
-        Keys stay on this machine. The add-in talks to your endpoint directly. If the browser blocks
-        the call (CORS), enable CORS on the server or wait for the optional local companion.
-      </Body1>
-    </div>
-  );
+  return [...lines, { kind: "assistant", text }];
 }
 
-function formatError(err: unknown): string {
-  if (err instanceof LlmError && err.code === "cors") {
-    return "This endpoint blocked the request (CORS). Enable CORS on the server, or use a local companion in a later release.";
+function linesRefTail(lines: StoredLine[]): StoredLine[] {
+  return lines;
+}
+
+function labelFromSnapshot(snap: DocumentSnapshot): string {
+  if (snap.host === "excel") {
+    const sel = snap.selection as { sheet?: string; address?: string };
+    if (sel?.sheet && sel.address) return `${sel.sheet}!${sel.address}`;
   }
-  if (err instanceof LlmError && err.code === "auth") {
-    return "The endpoint rejected the API key.";
+  if (snap.host === "powerpoint") {
+    const sel = snap.selection as { slideIndex?: number };
+    if (typeof sel?.slideIndex === "number") return `Slide ${sel.slideIndex + 1}`;
   }
-  if (err instanceof Error) return err.message;
-  return String(err);
+  if (snap.host === "word") {
+    const sel = snap.selection as { text?: string };
+    if (sel?.text) return `${Math.min(sel.text.length, 40)} chars selected`;
+  }
+  return snap.title || snap.host;
 }

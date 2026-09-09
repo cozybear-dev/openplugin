@@ -77,6 +77,10 @@ export async function chatCompletions(opts: {
   if (opts.config.apiKey && !headers.has("api-key") && !headers.has("Authorization")) {
     headers.set("Authorization", `Bearer ${opts.config.apiKey}`);
   }
+  if (/openrouter\.ai/i.test(opts.config.baseUrl)) {
+    if (!headers.has("HTTP-Referer")) headers.set("HTTP-Referer", "https://openplugin.local");
+    if (!headers.has("X-Title")) headers.set("X-Title", "OpenPlugin");
+  }
 
   const body: Record<string, unknown> = {
     model: opts.config.model,

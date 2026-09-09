@@ -35,7 +35,7 @@ describe("Changeset", () => {
     });
     const preview = cs.preview();
     expect(preview).toContain("Sheet1!A1");
-    expect(preview).toContain("insertParagraphs");
+    expect(preview).toContain("Insert paragraphs");
     expect(preview).toContain("A memo.");
   });
 

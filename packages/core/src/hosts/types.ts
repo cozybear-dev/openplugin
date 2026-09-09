@@ -57,6 +57,9 @@ export interface HostAdapter {
     values: unknown[][];
     truncated: boolean;
   }>;
+  readSelectionText?(): Promise<string>;
+  readShapeText?(args: { slideIndex: number; shapeName?: string }): Promise<string>;
+  readNotes?(slideIndex: number): Promise<string>;
 }
 
 export const READ_RANGE_MAX_ROWS = 200;

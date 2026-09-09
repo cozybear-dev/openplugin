@@ -51,6 +51,15 @@ export class ExcelHost implements HostAdapter {
     });
   }
 
+  async readSelectionText(): Promise<string> {
+    return withExcel(async (context) => {
+      const selected = context.workbook.getSelectedRange();
+      selected.load("values");
+      await context.sync();
+      return ((selected.values as unknown[][]) ?? []).flat().map((v) => String(v ?? "")).join(" ");
+    });
+  }
+
   async readRange(args: { sheet?: string; address: string }) {
     return withExcel(async (context) => {
       const sheet = args.sheet

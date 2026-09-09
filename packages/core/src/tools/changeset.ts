@@ -1,18 +1,34 @@
 import type { HostKind } from "../llm/types.js";
+import { hunksForChange, invertChange } from "./diff.js";
 
 export type ExcelChange =
-  | { host: "excel"; op: "writeRange"; sheet: string; address: string; values: unknown[][] }
-  | { host: "excel"; op: "setFormulas"; sheet: string; address: string; formulas: string[][] }
+  | {
+      host: "excel";
+      op: "writeRange";
+      sheet: string;
+      address: string;
+      values: unknown[][];
+      before?: unknown[][];
+    }
+  | {
+      host: "excel";
+      op: "setFormulas";
+      sheet: string;
+      address: string;
+      formulas: string[][];
+      before?: unknown[][];
+    }
   | { host: "excel"; op: "createTable"; sheet: string; address: string; name?: string }
   | { host: "excel"; op: "createChart"; sheet: string; source: string; chartType: string };
 
 export type WordChange =
-  | { host: "word"; op: "replaceSelection"; text: string }
+  | { host: "word"; op: "replaceSelection"; text: string; beforeText?: string }
   | {
       host: "word";
       op: "insertParagraphs";
       paragraphs: string[];
       location: "start" | "end" | "afterSelection";
+      beforeText?: string;
     }
   | { host: "word"; op: "searchReplace"; search: string; replace: string; all: boolean }
   | { host: "word"; op: "applyStyle"; style: string; target: "selection" | "heading" }
@@ -20,9 +36,16 @@ export type WordChange =
   | { host: "word"; op: "insertComment"; text: string };
 
 export type PptChange =
-  | { host: "powerpoint"; op: "setShapeText"; slideIndex: number; shapeName?: string; text: string }
+  | {
+      host: "powerpoint";
+      op: "setShapeText";
+      slideIndex: number;
+      shapeName?: string;
+      text: string;
+      beforeText?: string;
+    }
   | { host: "powerpoint"; op: "addSlide"; title: string; bullets?: string[] }
-  | { host: "powerpoint"; op: "setNotes"; slideIndex: number; notes: string }
+  | { host: "powerpoint"; op: "setNotes"; slideIndex: number; notes: string; beforeText?: string }
   | { host: "powerpoint"; op: "deleteSlide"; slideIndex: number };
 
 export type Change = ExcelChange | WordChange | PptChange;
@@ -55,6 +78,31 @@ export class Changeset {
 
   forHost(host: HostKind): Change[] {
     return this.changes.filter((c) => c.host === host);
+  }
+
+  diff() {
+    return this.changes.map((c, i) => hunksForChange(c, i));
+  }
+
+  inverse(): Changeset {
+    const next = new Changeset();
+    for (const change of this.changes) {
+      const inv = invertChange(change);
+      if (inv) next.add(inv);
+    }
+    return next;
+  }
+
+  filter(ids: Set<string>): Changeset {
+    const next = new Changeset();
+    this.changes.forEach((c, i) => {
+      if (ids.has(`${c.op}-${i}`)) next.add(c);
+    });
+    return next;
+  }
+
+  reversible(): boolean {
+    return this.changes.length > 0 && this.changes.every((c) => invertChange(c) != null);
   }
 }
 

@@ -38,3 +38,13 @@ export function appendAudit(entry: Record<string, unknown>): void {
   mkdirSync(dirname(file), { recursive: true });
   appendFileSync(file, `${JSON.stringify(entry)}\n`);
 }
+
+export function readAudit(limit = 100): Record<string, unknown>[] {
+  const file = join(dataDir(), "audit.jsonl");
+  if (!existsSync(file)) return [];
+  const lines = readFileSync(file, "utf8").trim().split(/\n/).filter(Boolean);
+  return lines
+    .slice(-limit)
+    .reverse()
+    .map((line) => JSON.parse(line) as Record<string, unknown>);
+}

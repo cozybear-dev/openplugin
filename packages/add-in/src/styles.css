@@ -141,12 +141,152 @@ body,
   cursor: pointer;
 }
 
-.op-review {
+.op-test-ok {
+  background: #107c10 !important;
+  color: #fff !important;
+  border-color: #107c10 !important;
+}
+
+.op-review,
+.op-applied {
   margin: 0 12px 8px;
   padding: 10px 12px;
   background: var(--op-card);
   border: 1px solid var(--op-line);
   border-radius: 12px;
+}
+
+.op-applied {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.op-hunks {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  max-height: 240px;
+  overflow: auto;
+  margin: 8px 0;
+}
+
+.op-hunk {
+  border: 1px solid var(--op-line);
+  border-radius: 8px;
+  padding: 8px;
+}
+
+.op-hunk-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 8px;
+}
+
+.op-grid {
+  display: flex;
+  flex-direction: column;
+  font-size: 12px;
+  margin-top: 8px;
+}
+
+.op-grid-row {
+  display: grid;
+  grid-template-columns: minmax(72px, 1.1fr) 1fr 1fr;
+  gap: 8px;
+  text-align: left;
+  background: none;
+  border: none;
+  border-bottom: 1px solid var(--op-line);
+  padding: 4px 0;
+  font: inherit;
+  color: inherit;
+  cursor: pointer;
+}
+
+.op-grid-head {
+  color: var(--op-muted);
+  font-size: 11px;
+  cursor: default;
+}
+
+.op-grid-row.is-changed .op-before {
+  text-decoration: line-through;
+  color: #a4262c;
+}
+
+.op-grid-row.is-changed .op-after {
+  color: #107c10;
+  font-weight: 600;
+}
+
+.op-textdiff {
+  font-size: 13px;
+  line-height: 1.5;
+  margin: 8px 0 0;
+  max-height: 140px;
+  overflow: auto;
+  white-space: pre-wrap;
+}
+
+.op-t-del {
+  background: #fde7e9;
+  color: #a4262c;
+  text-decoration: line-through;
+}
+
+.op-t-ins {
+  background: #dff6dd;
+  color: #107c10;
+  text-decoration: underline;
+}
+
+.op-slash {
+  margin: 0 12px 6px;
+  background: var(--op-card);
+  border: 1px solid var(--op-line);
+  border-radius: 10px;
+  overflow: hidden;
+}
+
+.op-slash-item {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  width: 100%;
+  border: none;
+  background: none;
+  padding: 8px 10px;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.op-slash-item:hover {
+  background: #e8f3fc;
+}
+
+.op-slash-item span {
+  color: var(--op-muted);
+  font-size: 11px;
+}
+
+.op-skill-list,
+.op-audit {
+  list-style: none;
+  padding: 0;
+  margin: 0 0 8px;
+}
+
+.op-skill-list li,
+.op-audit li {
+  padding: 6px 0;
+  border-bottom: 1px solid var(--op-line);
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
 }
 
 .op-review-kicker {

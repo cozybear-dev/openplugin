@@ -31,6 +31,10 @@ export class FakeExcelHost implements HostAdapter {
     };
   }
 
+  async readSelectionText(): Promise<string> {
+    return this.selection.values.flat().map((v) => String(v ?? "")).join(" ");
+  }
+
   async readRange(args: { sheet?: string; address: string }) {
     const sheet = this.sheets[args.sheet ?? this.selection.sheet];
     if (!sheet) throw new Error(`Unknown sheet: ${args.sheet}`);

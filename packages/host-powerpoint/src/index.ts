@@ -42,6 +42,40 @@ export class PowerPointHost implements HostAdapter {
     });
   }
 
+  async readSelectionText(): Promise<string> {
+    return getSelectedText();
+  }
+
+  async readShapeText(args: { slideIndex: number; shapeName?: string }): Promise<string> {
+    return PowerPoint.run(async (context) => {
+      const slide = context.presentation.slides.getItemAt(args.slideIndex);
+      const shapes = slide.shapes;
+      shapes.load("items/name,items/textFrame/textRange/text");
+      await context.sync();
+      const shape = args.shapeName
+        ? shapes.items.find((s) => s.name === args.shapeName)
+        : shapes.items[0];
+      try {
+        return shape?.textFrame.textRange.text ?? "";
+      } catch {
+        return "";
+      }
+    });
+  }
+
+  async readNotes(slideIndex: number): Promise<string> {
+    return PowerPoint.run(async (context) => {
+      const slide = context.presentation.slides.getItemAt(slideIndex);
+      try {
+        slide.notesPage.body.textFrame.textRange.load("text");
+        await context.sync();
+        return slide.notesPage.body.textFrame.textRange.text ?? "";
+      } catch {
+        return "";
+      }
+    });
+  }
+
   async apply(changeset: Changeset): Promise<void> {
     await PowerPoint.run(async (context) => {
       for (const change of changeset.forHost("powerpoint")) {

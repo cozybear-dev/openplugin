@@ -22,6 +22,23 @@ export class FakePowerPointHost implements HostAdapter {
     };
   }
 
+  async readSelectionText(): Promise<string> {
+    return this.selection.text;
+  }
+
+  async readShapeText(args: { slideIndex: number; shapeName?: string }): Promise<string> {
+    const slide = this.slides[args.slideIndex];
+    if (!slide) return "";
+    const shape = args.shapeName
+      ? slide.shapes.find((s) => s.name === args.shapeName)
+      : slide.shapes[0];
+    return shape?.text ?? slide.title;
+  }
+
+  async readNotes(slideIndex: number): Promise<string> {
+    return this.slides[slideIndex]?.notes ?? "";
+  }
+
   async apply(changeset: Changeset): Promise<void> {
     for (const change of changeset.forHost("powerpoint")) {
       if (change.op === "addSlide") {

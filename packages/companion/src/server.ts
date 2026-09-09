@@ -1,5 +1,5 @@
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
-import { appendAudit, ensureConfig, readPolicy } from "./store.ts";
+import { appendAudit, ensureConfig, readAudit, readPolicy } from "./store.ts";
 import { forwardHeaders, joinTarget, proxyTo } from "./proxy.ts";
 
 const PORT = Number(process.env.OPENPLUGIN_COMPANION_PORT ?? 8788);
@@ -59,6 +59,10 @@ const server = createServer(async (req, res) => {
     }
     if (req.method === "GET" && url.pathname === "/policy") {
       json(res, 200, { policy: readPolicy() });
+      return;
+    }
+    if (req.method === "GET" && url.pathname === "/audit") {
+      json(res, 200, { entries: readAudit(Number(url.searchParams.get("limit") || 100)) });
       return;
     }
     if (req.method === "POST" && url.pathname === "/audit") {

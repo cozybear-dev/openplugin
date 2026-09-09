@@ -1,10 +1,12 @@
 import {
   assertPolicy,
+  Changeset,
   compileSnapshot,
   describeTool,
   LlmError,
   mergePolicy,
   OPEN_POLICY,
+  parseSlash,
   runAgent,
   type AgentResult,
   type ChatMessage,
@@ -15,18 +17,28 @@ import {
   type Skill
 } from "@openplugin/core";
 import { useEffect, useMemo, useRef, useState } from "react";
+import { appendAuditLocal, loadAudit, type AuditEntry } from "./audit";
 import { bundledSkills } from "./bundled-skills";
 import { fetchPolicy, postAudit, probeCompanion, type CompanionStatus } from "./companion";
 import { clearHistory, loadHistory, saveHistory, type StoredLine } from "./history";
 import { COMPANION_ORIGIN, isOllamaUrl, isOpenRouterUrl } from "./presets";
+import { loadRevisions, pushRevision, saveRevisions, type AppliedRevision } from "./revisions";
 import { createHost } from "./runtime-host";
 import { loadInstructions, loadProvider, loadUserPolicy, saveInstructions, saveProvider } from "./settings";
-import { importCatalog, importSkillFromUrl, listImportedSkills } from "./skill-store";
+import {
+  importCatalog,
+  importSkillFromMarkdown,
+  importSkillFromUrl,
+  listImportedSkills,
+  loadDisabledSkills,
+  removeImportedSkill,
+  saveDisabledSkills
+} from "./skill-store";
 import { Composer } from "./ui/Composer";
 import { EmptyState } from "./ui/EmptyState";
 import { formatError, SettingsPanel } from "./ui/SettingsPanel";
 import { Header } from "./ui/Header";
-import { ReviewCard } from "./ui/ReviewCard";
+import { AppliedBar, ReviewPanel } from "./ui/ReviewCard";
 import { Thread } from "./ui/Thread";
 
 export function App(props: { hostKind: HostKind; inOffice: boolean }) {
@@ -48,10 +60,20 @@ export function App(props: { hostKind: HostKind; inOffice: boolean }) {
   const [history, setHistory] = useState<ChatMessage[]>(() => loadHistory(props.hostKind).messages);
   const [busy, setBusy] = useState(false);
   const [pending, setPending] = useState<AgentResult | null>(null);
+  const [selectedHunks, setSelectedHunks] = useState<Set<string>>(new Set());
   const [alwaysApply, setAlwaysApply] = useState(false);
+  const [revisions, setRevisions] = useState<AppliedRevision[]>(() => loadRevisions());
+  const [lastApplied, setLastApplied] = useState<AppliedRevision | null>(null);
+  const [disabledSkills, setDisabledSkills] = useState<string[]>(() => loadDisabledSkills());
+  const [audit, setAudit] = useState<AuditEntry[]>(() => loadAudit());
   const [contextLabel, setContextLabel] = useState(props.hostKind);
   const [snapshot, setSnapshot] = useState<DocumentSnapshot | undefined>();
   const abortRef = useRef<AbortController | null>(null);
+
+  const enabledSkills = useMemo(
+    () => skills.list(props.hostKind).filter((s) => !disabledSkills.includes(s.name)),
+    [skills, props.hostKind, disabledSkills]
+  );
 
   useEffect(() => {
     void (async () => {
@@ -100,6 +122,20 @@ export function App(props: { hostKind: HostKind; inOffice: boolean }) {
     await saveHistory(props.hostKind, nextLines, nextMessages);
   }
 
+  function log(action: AuditEntry["action"], summary: string, extra?: Partial<AuditEntry>) {
+    const list = appendAuditLocal({
+      action,
+      host: props.hostKind,
+      model: provider.model,
+      summary,
+      ...extra
+    });
+    setAudit(list);
+    if (companion.state === "connected") {
+      void postAudit(companion.token, list[0]!);
+    }
+  }
+
   function effectiveConfig(base: ProviderConfig, viaCompanion: boolean): ProviderConfig {
     const headers = { ...(base.headers ?? {}) };
     if (isOpenRouterUrl(base.baseUrl)) {
@@ -123,6 +159,27 @@ export function App(props: { hostKind: HostKind; inOffice: boolean }) {
   async function send(text = input) {
     const prompt = text.trim();
     if (!prompt || busy) return;
+
+    const slash = parseSlash(prompt, enabledSkills.map((s) => s.name));
+    if (slash.kind === "list") {
+      setInput("");
+      setLines((l) => [
+        ...l,
+        { kind: "user", text: prompt },
+        {
+          kind: "assistant",
+          text: enabledSkills.length
+            ? enabledSkills.map((s) => `/${s.name} — ${s.description}`).join("\n")
+            : "No skills enabled for this host."
+        }
+      ]);
+      return;
+    }
+    if (slash.kind === "unknown") {
+      setLines((l) => [...l, { kind: "error", text: `Unknown skill /${slash.name}. Type / to list skills.` }]);
+      return;
+    }
+
     if (!provider.baseUrl || !provider.model) {
       setTab("settings");
       return;
@@ -142,9 +199,14 @@ export function App(props: { hostKind: HostKind; inOffice: boolean }) {
     abortRef.current = controller;
 
     const useCompanionFirst = isOllamaUrl(provider.baseUrl) && companion.state === "connected";
+    const skillPrefix =
+      slash.kind === "skill"
+        ? `Use the ${slash.name} skill.${slash.rest ? `\n\n${slash.rest}` : ""}`
+        : prompt;
+    if (slash.kind === "skill") log("skill", `/${slash.name}`, { skill: slash.name });
     const message = instructions.trim()
-      ? `${prompt}\n\nStanding instructions:\n${instructions.trim()}`
-      : prompt;
+      ? `${skillPrefix}\n\nStanding instructions:\n${instructions.trim()}`
+      : skillPrefix;
 
     try {
       const result = await runTurn(message, effectiveConfig(provider, useCompanionFirst), controller.signal);
@@ -225,9 +287,10 @@ export function App(props: { hostKind: HostKind; inOffice: boolean }) {
       });
     }
     if (!result.changeset.isEmpty()) {
+      const hunks = result.changeset.diff();
+      setSelectedHunks(new Set(hunks.map((h) => h.id)));
       if (alwaysApply) {
-        await host.apply(result.changeset);
-        result.changeset.clear();
+        await applyChangeset(result.changeset);
         setPending(null);
       } else {
         setPending(result);
@@ -237,11 +300,43 @@ export function App(props: { hostKind: HostKind; inOffice: boolean }) {
     }
   }
 
-  async function apply() {
+  async function applyChangeset(cs: Changeset) {
+    await host.apply(cs);
+    const inverse = cs.inverse();
+    const summary = cs.previewItems().map((i) => i.title).join(", ");
+    const rev: AppliedRevision = {
+      id: `${Date.now()}`,
+      at: new Date().toISOString(),
+      host: props.hostKind,
+      summary,
+      inverse: inverse.changes
+    };
+    const next = pushRevision(revisions, rev);
+    setRevisions(next);
+    setLastApplied(rev);
+    await saveRevisions(next);
+    log("apply", summary);
+  }
+
+  async function applySelected() {
     if (!pending) return;
-    await host.apply(pending.changeset);
+    const filtered = pending.changeset.filter(selectedHunks);
+    if (filtered.isEmpty()) return;
+    await applyChangeset(filtered);
     pending.changeset.clear();
     setPending(null);
+  }
+
+  async function revertLast() {
+    if (!lastApplied?.inverse.length) return;
+    const cs = new Changeset();
+    for (const c of lastApplied.inverse) cs.add(c);
+    await host.apply(cs);
+    log("revert", lastApplied.summary);
+    const next = revisions.filter((r) => r.id !== lastApplied.id);
+    setRevisions(next);
+    setLastApplied(next[0] ?? null);
+    await saveRevisions(next);
   }
 
   return (
@@ -263,6 +358,23 @@ export function App(props: { hostKind: HostKind; inOffice: boolean }) {
           instructions={instructions}
           companion={companion}
           policyNote={policy.catalogUrl ? `Tenant catalog: ${policy.catalogUrl}` : undefined}
+          skills={[
+            ...bundledSkills()
+              .list(props.hostKind)
+              .map((s) => ({ ...s, source: "bundled" as const })),
+            ...imported
+              .filter((s) => s.hosts.includes(props.hostKind))
+              .map((s) => ({
+                name: s.name,
+                description: s.description,
+                hosts: s.hosts,
+                tools: s.tools,
+                source: "imported" as const
+              }))
+          ]}
+          disabledSkills={disabledSkills}
+          audit={audit}
+          autoApply={alwaysApply}
           onClose={() => setTab("chat")}
           onChange={async (next) => {
             setProvider(next);
@@ -276,6 +388,25 @@ export function App(props: { hostKind: HostKind; inOffice: boolean }) {
             const skill = await importSkillFromUrl(url);
             setImported((s) => [...s.filter((x) => x.name !== skill.name), skill]);
           }}
+          onImportMarkdown={async (md) => {
+            const nameMatch = md.match(/^name:\s*([a-z0-9-]+)/m);
+            const folder = nameMatch?.[1] ?? "imported-skill";
+            const skill = await importSkillFromMarkdown(md, folder);
+            setImported((s) => [...s.filter((x) => x.name !== skill.name), skill]);
+          }}
+          onRemoveSkill={async (name) => {
+            await removeImportedSkill(name);
+            setImported((s) => s.filter((x) => x.name !== name));
+          }}
+          onToggleSkill={(name, enabled) => {
+            const next = enabled
+              ? disabledSkills.filter((n) => n !== name)
+              : [...disabledSkills, name];
+            setDisabledSkills(next);
+            saveDisabledSkills(next);
+          }}
+          onAutoApply={setAlwaysApply}
+          onTestLogged={(ok, summary) => log(ok ? "test" : "error", summary)}
         />
       ) : (
         <>
@@ -285,26 +416,42 @@ export function App(props: { hostKind: HostKind; inOffice: boolean }) {
             <Thread hostKind={props.hostKind} lines={lines} busy={busy} />
           )}
           {pending && !pending.changeset.isEmpty() && (
-            <ReviewCard
-              items={pending.changeset.previewItems()}
-              onApply={() => void apply()}
-              onReject={() => setPending(null)}
-              onAlways={() => {
-                setAlwaysApply(true);
-                void apply();
+            <ReviewPanel
+              hostKind={props.hostKind}
+              hunks={pending.changeset.diff()}
+              selected={selectedHunks}
+              onToggle={(id, on) => {
+                setSelectedHunks((prev) => {
+                  const next = new Set(prev);
+                  if (on) next.add(id);
+                  else next.delete(id);
+                  return next;
+                });
               }}
+              onApply={() => void applySelected()}
+              onReject={() => {
+                log("reject", pending.changeset.previewItems().map((i) => i.title).join(", "));
+                setPending(null);
+              }}
+            />
+          )}
+          {!pending && lastApplied && (
+            <AppliedBar
+              summary={lastApplied.summary}
+              canRevert={lastApplied.inverse.length > 0}
+              onRevert={() => void revertLast()}
             />
           )}
           <Composer
             value={input}
             busy={busy}
             disabled={!provider.baseUrl}
-            skills={skills.list(props.hostKind)}
+            skills={enabledSkills}
             model={provider.model}
             onChange={setInput}
             onSend={() => void send()}
             onStop={() => abortRef.current?.abort()}
-            onInsertSkill={(name) => setInput((v) => `${v}${v ? " " : ""}Use the ${name} skill. `)}
+            onInsertSkill={(name) => setInput(`/${name} `)}
           />
         </>
       )}

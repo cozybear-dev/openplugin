@@ -18,6 +18,9 @@ export type { SkillCatalogEntry } from "./skills/registry.js";
 export { Changeset } from "./tools/changeset.js";
 export type { Change, ExcelChange, PptChange, WordChange } from "./tools/changeset.js";
 export { executeHostTool, listToolDefinitions } from "./tools/registry.js";
+export { cellDiff, invertChange, textDiff, type CellDelta, type DiffHunk, type TextPart } from "./tools/diff.js";
+export { parseSlash, slashSuggestions } from "./skills/slash.js";
+export type { SlashParse } from "./skills/slash.js";
 export { describeTool } from "./tools/describe.js";
 export {
   MAP_CHUNK,

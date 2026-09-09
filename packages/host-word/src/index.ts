@@ -42,8 +42,22 @@ export class WordHost implements HostAdapter {
     });
   }
 
+  async readSelectionText(): Promise<string> {
+    return Word.run(async (context) => {
+      const selection = context.document.getSelection();
+      selection.load("text");
+      await context.sync();
+      return selection.text ?? "";
+    });
+  }
+
   async apply(changeset: Changeset): Promise<void> {
     await Word.run(async (context) => {
+      try {
+        context.document.changeTrackingMode = Word.ChangeTrackingMode.trackAll;
+      } catch {
+        /* requirement set missing */
+      }
       const body = context.document.body;
       const selection = context.document.getSelection();
       for (const change of changeset.forHost("word")) {

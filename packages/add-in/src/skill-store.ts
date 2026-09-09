@@ -25,6 +25,31 @@ export async function listImportedSkills(): Promise<Skill[]> {
   });
 }
 
+export async function removeImportedSkill(name: string): Promise<void> {
+  const db = await openDb();
+  await new Promise<void>((resolve, reject) => {
+    const tx = db.transaction(STORE, "readwrite");
+    tx.objectStore(STORE).delete(name);
+    tx.oncomplete = () => resolve();
+    tx.onerror = () => reject(tx.error);
+  });
+}
+
+const DISABLED_KEY = "openplugin.disabledSkills";
+
+export function loadDisabledSkills(): string[] {
+  try {
+    const raw = localStorage.getItem(DISABLED_KEY);
+    return raw ? (JSON.parse(raw) as string[]) : [];
+  } catch {
+    return [];
+  }
+}
+
+export function saveDisabledSkills(names: string[]): void {
+  localStorage.setItem(DISABLED_KEY, JSON.stringify(names));
+}
+
 export async function saveImportedSkill(skill: Skill): Promise<void> {
   const db = await openDb();
   await new Promise<void>((resolve, reject) => {

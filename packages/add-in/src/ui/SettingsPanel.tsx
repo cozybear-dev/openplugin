@@ -2,6 +2,7 @@ import {
   Body1,
   Button,
   Caption1,
+  Checkbox,
   Dropdown,
   Field,
   Input,
@@ -10,8 +11,10 @@ import {
   Option,
   Textarea
 } from "@fluentui/react-components";
-import { useState } from "react";
-import { chatCompletions, LlmError, type ProviderConfig } from "@openplugin/core";
+import { CheckmarkFilled, DismissCircleFilled } from "@fluentui/react-icons";
+import { useEffect, useState } from "react";
+import { chatCompletions, LlmError, type ProviderConfig, type SkillCatalogEntry } from "@openplugin/core";
+import type { AuditEntry } from "../audit";
 import type { CompanionStatus } from "../companion";
 import { matchPreset, PRESETS } from "../presets";
 
@@ -20,16 +23,32 @@ export function SettingsPanel(props: {
   instructions: string;
   companion: CompanionStatus;
   policyNote?: string;
+  skills: Array<SkillCatalogEntry & { source: "bundled" | "imported" }>;
+  disabledSkills: string[];
+  audit: AuditEntry[];
+  autoApply: boolean;
   onClose: () => void;
   onChange: (next: ProviderConfig) => Promise<void>;
   onInstructions: (text: string) => Promise<void>;
   onImportUrl: (url: string) => Promise<void>;
+  onImportMarkdown: (md: string) => Promise<void>;
+  onRemoveSkill: (name: string) => Promise<void>;
+  onToggleSkill: (name: string, enabled: boolean) => void;
+  onAutoApply: (on: boolean) => void;
+  onTestLogged: (ok: boolean, summary: string) => void;
 }) {
   const preset = matchPreset(props.provider.baseUrl);
   const [testing, setTesting] = useState(false);
-  const [testMsg, setTestMsg] = useState<string | null>(null);
+  const [testStatus, setTestStatus] = useState<"idle" | "ok" | "fail">("idle");
+  const [testError, setTestError] = useState<string | null>(null);
   const [importUrl, setImportUrl] = useState("");
+  const [paste, setPaste] = useState("");
   const [importMsg, setImportMsg] = useState<string | null>(null);
+
+  useEffect(() => {
+    setTestStatus("idle");
+    setTestError(null);
+  }, [props.provider.baseUrl, props.provider.apiKey, props.provider.model]);
 
   function patch(partial: Partial<ProviderConfig>) {
     void props.onChange({ ...props.provider, ...partial });
@@ -37,20 +56,26 @@ export function SettingsPanel(props: {
 
   async function testConnection() {
     setTesting(true);
-    setTestMsg(null);
+    setTestError(null);
     try {
-      const result = await chatCompletions({
+      await chatCompletions({
         config: { ...props.provider, maxOutputTokens: 8 },
         messages: [{ role: "user", content: "Reply with ok" }]
       });
-      const text = result.message.role === "assistant" ? result.message.content : "";
-      setTestMsg(`Connected. ${text || "Empty reply."}`);
+      setTestStatus("ok");
+      props.onTestLogged(true, `Connected to ${props.provider.model}`);
     } catch (err) {
-      setTestMsg(formatError(err, props.companion.state === "connected"));
+      setTestStatus("fail");
+      const msg = formatError(err, props.companion.state === "connected");
+      setTestError(msg);
+      props.onTestLogged(false, msg);
     } finally {
       setTesting(false);
     }
   }
+
+  const testLabel =
+    testing ? "Testing…" : testStatus === "ok" ? `Connected · ${props.provider.model || "ok"}` : "Test connection";
 
   return (
     <div className="op-settings">
@@ -110,10 +135,32 @@ export function SettingsPanel(props: {
         </MessageBarBody>
       </MessageBar>
 
-      <Button disabled={testing || !props.provider.baseUrl} onClick={() => void testConnection()}>
-        {testing ? "Testing…" : "Test connection"}
+      <Button
+        className={testStatus === "ok" ? "op-test-ok" : undefined}
+        appearance={testStatus === "fail" ? "outline" : testStatus === "ok" ? "primary" : "secondary"}
+        icon={
+          testStatus === "ok" ? (
+            <CheckmarkFilled />
+          ) : testStatus === "fail" ? (
+            <DismissCircleFilled />
+          ) : undefined
+        }
+        disabled={testing || !props.provider.baseUrl}
+        onClick={() => void testConnection()}
+      >
+        {testLabel}
       </Button>
-      {testMsg && <Caption1>{testMsg}</Caption1>}
+      {testStatus === "fail" && testError && (
+        <MessageBar intent="error">
+          <MessageBarBody>{testError}</MessageBarBody>
+        </MessageBar>
+      )}
+
+      <Checkbox
+        checked={props.autoApply}
+        label="Auto-apply this session (skip review)"
+        onChange={(_, d) => props.onAutoApply(Boolean(d.checked))}
+      />
 
       <Field label="Instructions for this host">
         <Textarea
@@ -122,6 +169,27 @@ export function SettingsPanel(props: {
           onChange={(_, d) => void props.onInstructions(d.value)}
         />
       </Field>
+
+      <Body1>Skills</Body1>
+      <ul className="op-skill-list">
+        {props.skills.map((s) => (
+          <li key={s.name}>
+            <Checkbox
+              checked={!props.disabledSkills.includes(s.name)}
+              label={`/${s.name}`}
+              onChange={(_, d) => props.onToggleSkill(s.name, Boolean(d.checked))}
+            />
+            <Caption1>
+              {s.source} · {s.description}
+            </Caption1>
+            {s.source === "imported" && (
+              <Button size="small" appearance="subtle" onClick={() => void props.onRemoveSkill(s.name)}>
+                Remove
+              </Button>
+            )}
+          </li>
+        ))}
+      </ul>
 
       <Field label="Import skill from URL">
         <div className="op-import">
@@ -143,8 +211,42 @@ export function SettingsPanel(props: {
           </Button>
         </div>
       </Field>
+      <Field label="Or paste a SKILL.md">
+        <Textarea value={paste} onChange={(_, d) => setPaste(d.value)} placeholder="---&#10;name: my-skill&#10;..." />
+        <Button
+          disabled={!paste.trim()}
+          onClick={async () => {
+            setImportMsg(null);
+            try {
+              await props.onImportMarkdown(paste);
+              setPaste("");
+              setImportMsg("Skill imported.");
+            } catch (err) {
+              setImportMsg(err instanceof Error ? err.message : String(err));
+            }
+          }}
+        >
+          Import paste
+        </Button>
+      </Field>
       {importMsg && <Caption1>{importMsg}</Caption1>}
       {props.policyNote && <Caption1>{props.policyNote}</Caption1>}
+
+      <Body1>Activity</Body1>
+      {props.audit.length === 0 ? (
+        <Caption1>Applies, rejects, connection tests, and skill runs show up here.</Caption1>
+      ) : (
+        <ul className="op-audit">
+          {props.audit.slice(0, 40).map((e, i) => (
+            <li key={`${e.ts}-${i}`}>
+              <Caption1>
+                {new Date(e.ts).toLocaleString()} · {e.action}
+              </Caption1>
+              <span>{e.summary}</span>
+            </li>
+          ))}
+        </ul>
+      )}
       <Caption1>
         Keys stay on this machine. The add-in talks to your endpoint directly — nothing is proxied
         through us.

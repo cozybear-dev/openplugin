@@ -9,7 +9,7 @@ import {
   Tooltip
 } from "@fluentui/react-components";
 import { Add24Regular, Send24Regular, Square24Filled } from "@fluentui/react-icons";
-import type { SkillCatalogEntry } from "@openplugin/core";
+import { slashSuggestions, type SkillCatalogEntry } from "@openplugin/core";
 
 export function Composer(props: {
   value: string;
@@ -22,16 +22,43 @@ export function Composer(props: {
   onStop: () => void;
   onInsertSkill: (name: string) => void;
 }) {
+  const names = props.skills.map((s) => s.name);
+  const suggestions = slashSuggestions(props.value, names);
+  const showSlash = props.value.startsWith("/") && !props.value.includes("\n");
+
   return (
     <div className="op-composer">
+      {showSlash && suggestions.length > 0 && (
+        <div className="op-slash">
+          {suggestions.map((name) => (
+            <button
+              key={name}
+              type="button"
+              className="op-slash-item"
+              onMouseDown={(e) => {
+                e.preventDefault();
+                props.onInsertSkill(name);
+              }}
+            >
+              /{name}
+              <span>{props.skills.find((s) => s.name === name)?.description}</span>
+            </button>
+          ))}
+        </div>
+      )}
       <div className="op-composer-box">
         <Textarea
           value={props.value}
           disabled={props.disabled}
           textarea={{ className: "op-composer-input" }}
-          placeholder="Ask OpenPlugin to edit the document…"
+          placeholder="Ask OpenPlugin, or type / for a skill…"
           onChange={(_, d) => props.onChange(d.value)}
           onKeyDown={(e) => {
+            if (e.key === "Tab" && showSlash && suggestions[0]) {
+              e.preventDefault();
+              props.onInsertSkill(suggestions[0]);
+              return;
+            }
             if (e.key === "Enter" && !e.shiftKey) {
               e.preventDefault();
               if (!props.busy) props.onSend();
@@ -52,7 +79,7 @@ export function Composer(props: {
                 ) : (
                   props.skills.map((s) => (
                     <MenuItem key={s.name} onClick={() => props.onInsertSkill(s.name)}>
-                      {s.name}
+                      /{s.name}
                     </MenuItem>
                   ))
                 )}

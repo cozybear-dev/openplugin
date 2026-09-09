@@ -185,24 +185,32 @@ export async function executeHostTool(
     case "excel.listTables":
     case "excel.listCharts":
       return host.getRawFacts();
-    case "excel.writeRange":
+    case "excel.writeRange": {
+      const sheet = String(args.sheet);
+      const address = String(args.address);
       changeset.add({
         host: "excel",
         op: "writeRange",
-        sheet: String(args.sheet),
-        address: String(args.address),
-        values: args.values as unknown[][]
+        sheet,
+        address,
+        values: args.values as unknown[][],
+        before: await captureGrid(host, sheet, address)
       });
       return { queued: true, preview: changeset.preview() };
-    case "excel.setFormulas":
+    }
+    case "excel.setFormulas": {
+      const sheet = String(args.sheet);
+      const address = String(args.address);
       changeset.add({
         host: "excel",
         op: "setFormulas",
-        sheet: String(args.sheet),
-        address: String(args.address),
-        formulas: args.formulas as string[][]
+        sheet,
+        address,
+        formulas: args.formulas as string[][],
+        before: await captureGrid(host, sheet, address)
       });
       return { queued: true };
+    }
     case "excel.createTable":
       changeset.add({
         host: "excel",
@@ -222,7 +230,12 @@ export async function executeHostTool(
       });
       return { queued: true };
     case "word.replaceSelection":
-      changeset.add({ host: "word", op: "replaceSelection", text: String(args.text) });
+      changeset.add({
+        host: "word",
+        op: "replaceSelection",
+        text: String(args.text),
+        beforeText: await captureText(host)
+      });
       return { queued: true };
     case "word.insertParagraphs":
       changeset.add({
@@ -260,15 +273,21 @@ export async function executeHostTool(
     case "word.insertComment":
       changeset.add({ host: "word", op: "insertComment", text: String(args.text) });
       return { queued: true };
-    case "ppt.setShapeText":
+    case "ppt.setShapeText": {
+      const slideIndex = Number(args.slideIndex);
+      const shapeName = args.shapeName as string | undefined;
       changeset.add({
         host: "powerpoint",
         op: "setShapeText",
-        slideIndex: Number(args.slideIndex),
-        shapeName: args.shapeName as string | undefined,
-        text: String(args.text)
+        slideIndex,
+        shapeName,
+        text: String(args.text),
+        beforeText: host.readShapeText
+          ? await host.readShapeText({ slideIndex, shapeName })
+          : await captureText(host)
       });
       return { queued: true };
+    }
     case "ppt.addSlide":
       changeset.add({
         host: "powerpoint",
@@ -277,14 +296,17 @@ export async function executeHostTool(
         bullets: args.bullets as string[] | undefined
       });
       return { queued: true };
-    case "ppt.setNotes":
+    case "ppt.setNotes": {
+      const slideIndex = Number(args.slideIndex);
       changeset.add({
         host: "powerpoint",
         op: "setNotes",
-        slideIndex: Number(args.slideIndex),
-        notes: String(args.notes)
+        slideIndex,
+        notes: String(args.notes),
+        beforeText: host.readNotes ? await host.readNotes(slideIndex) : ""
       });
       return { queued: true };
+    }
     case "ppt.deleteSlide":
       changeset.add({ host: "powerpoint", op: "deleteSlide", slideIndex: Number(args.slideIndex) });
       return { queued: true };
@@ -292,5 +314,27 @@ export async function executeHostTool(
       throw new Error("host.executeOfficeJs is disabled by policy.");
     default:
       return { truncated: false, values: truncateGrid([]).values };
+  }
+}
+
+async function captureGrid(
+  host: HostAdapter,
+  sheet: string,
+  address: string
+): Promise<unknown[][] | undefined> {
+  if (!host.readRange) return undefined;
+  try {
+    return (await host.readRange({ sheet, address })).values;
+  } catch {
+    return undefined;
+  }
+}
+
+async function captureText(host: HostAdapter): Promise<string | undefined> {
+  if (!host.readSelectionText) return undefined;
+  try {
+    return await host.readSelectionText();
+  } catch {
+    return undefined;
   }
 }

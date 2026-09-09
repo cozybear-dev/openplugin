@@ -25,6 +25,10 @@ export class FakeWordHost implements HostAdapter {
     };
   }
 
+  async readSelectionText(): Promise<string> {
+    return this.selection.text;
+  }
+
   async apply(changeset: Changeset): Promise<void> {
     for (const change of changeset.forHost("word")) {
       if (change.op === "replaceSelection") {

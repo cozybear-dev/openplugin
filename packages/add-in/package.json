@@ -35,7 +35,7 @@
     "@types/react-dom": "^19.1.9",
     "@vitejs/plugin-react": "^5.0.2",
     "jsdom": "^30.0.1",
-    "office-addin-debugging": "^6.0.3",
+    "office-addin-debugging": "^7.0.1",
     "office-addin-dev-certs": "^2.0.3",
     "typescript": "^5.9.2",
     "vite": "^7.1.5",
